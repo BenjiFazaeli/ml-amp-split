@@ -69,6 +69,10 @@ OVERFLOW_RE = re.compile(r"maximum context length of (\d+) tokens.*?(\d+) tokens
                          re.DOTALL)
 INPUT_TOO_LONG_RE = re.compile(r"The input \((\d+) tokens\) is longer than the model's context "
                                r"length")
+# amp-split patch: vLLM's wording (vllm/renderers/params.py, _token_len_check) of a prompt over the
+# context, so that it is a ContextOverflow like SGLang's and the loop shortens the history.
+VLLM_OVERFLOW_RE = re.compile(r"maximum context length is (\d+) tokens\. However, your prompt "
+                              r"contains (?:at least )?(\d+) input tokens", re.DOTALL)
 TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 FUNCTION_RE = re.compile(r"<function=([^>\s]+)\s*>(.*?)(?:</function>|\Z)", re.DOTALL)
 PARAM_RE = re.compile(r"<parameter=([^>\s]+)\s*>(.*?)(?:</parameter>|(?=<parameter=)|\Z)",
@@ -557,6 +561,9 @@ class OpenAIChatClient(HTTPClient):
             m = INPUT_TOO_LONG_RE.search(raw)
             if m:
                 return ContextOverflow(msg, 400, raw, prompt_tokens=int(m.group(1)))
+            m = VLLM_OVERFLOW_RE.search(raw)
+            if m:
+                return ContextOverflow(msg, 400, raw, prompt_tokens=int(m.group(2)))
         if status in self.retry_status or status >= 500:
             return Retry(msg, status, retry_after(headers.get("retry-after")), raw)
         return LLMError(msg, status, raw)
