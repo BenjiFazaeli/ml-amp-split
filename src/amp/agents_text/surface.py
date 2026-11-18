@@ -55,7 +55,7 @@ def episode_over_text(end, obs: dict, benchmark: bool = False, judged_by_self: b
             steps_left=obs.get("steps_left"), mode=obs.get("mode"))
     return msg + (VDM_NOTES["over_tail"] if vdm else EPISODE_OVER["tail"])
 
-VDM_SURFACE_VERSION = 1
+VDM_SURFACE_VERSION = 2
 
 VDM_NOTES = {
     "diff": "[vision model] What changed between step {before} and step {after}, seen by {seen}:"
@@ -86,6 +86,16 @@ VDM_PROMPTS = {
         "should try to provide objective information and no assumptions. Do *NOT* write any "
         "code."),
     "view": "{cam} camera view:",
+    # amp-split, vision mode vdm: a scene call after the start, for the agent's questions
+    "now_system": (
+        "You are a helpful assistant that describes the current state of the environment, seen "
+        "by the robot's cameras, and answers the questions of the agent controlling the robot, "
+        "with the goal of the task in mind. You should try to provide objective information and "
+        "no assumptions. Do *NOT* write any code."),
+    "now_user": (
+        "Describe the current state of the environment with the goal of the task in mind, and "
+        "answer the questions of the agent controlling the robot below. You should try to provide "
+        "objective information and no assumptions. Do *NOT* write any code."),
     "diff_system": (
         "You are a helpful assistant that describes the difference between the current state of "
         "the environment and the previous state of the environment with the goal of the task in "
@@ -108,6 +118,14 @@ VDM_PROMPTS = {
                     "gripper, the robot and the other objects (left of, behind, touching, about "
                     "as wide as the open gripper). Give no pixel coordinates, distances, angles, "
                     "sizes or other numbers, even if the agent asks for them."),
+    # amp-split, vision mode vdm: the agent measures positions itself and draws perceived ids on
+    # the views it shows, so the vision model names drawn labels but still gives no numbers.
+    "qualitative_vdm": (
+        "Describe positions, sizes and distances only in words: relative to the gripper, the "
+        "robot and the other objects (left of, behind, touching, about as wide as the open "
+        "gripper). Give no pixel coordinates, distances, angles or sizes: the agent measures "
+        "those itself. Where labels are drawn on an image (such as obj3), name the labelled "
+        "objects by those labels."),
 }
 
 _SEEN_BY = """\

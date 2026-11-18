@@ -507,7 +507,8 @@ class Agent:
             self.ev("agent.kernel.restart", {"error": res.error[:2000], "by": "kernel"},
                     lvl="warn")
         blocks, is_error = T.python_result(res, timeout_s, self.dir, self.kernel_uid, note,
-                                           attach=self.vdm is None)
+                                           attach=self.vdm is None,
+                                           labels=self.vision == "vdm")
         if self.vdm is None:
             blocks += self.camera_blocks(res.images or [])
         rec = {"stdout": res.stdout, "stderr": res.stderr, "error": res.error,
@@ -773,13 +774,20 @@ class Agent:
         showed anything, and no note is pending."""
         notes, self.vdm_pending = self.vdm_pending, []
         shown = [s for s in rec.get("shown") or [] if s.get("path") or s.get("camera")]
-        dropped = sum(1 for s in shown if s.get("path"))
-        shown = [s for s in shown if not s.get("path")]
+        views = self.vision == "vdm"     # amp-split: vdm describes the images the code shows
+        dropped = 0 if views else sum(1 for s in shown if s.get("path"))
+        if not views:
+            shown = [s for s in shown if not s.get("path")]
         shown = shown[:T.MAX_SHOWN]
         known = set(self.episode_cameras())
         unknown = [s["camera"] for s in shown if s.get("camera") and s["camera"] not in known]
         shown = [s for s in shown if not s.get("camera") or s["camera"] in known]
-        if self.frames and self.before and (moved or shown):
+        if views:
+            if self.frames and self.before and moved:
+                notes.append(self.describe("diff", shown))
+            elif shown and self.frames:
+                notes.append(self.describe("scene", shown))
+        elif self.frames and self.before and (moved or shown):
             notes.append(self.describe("diff" if moved else "look", shown))
         elif shown:
             notes.append(self.describe("scene", shown))
@@ -806,7 +814,10 @@ class Agent:
         content = [_text(P["task"].format(instruction=self.instruction or ""))]
         if mode == "scene":
             cams = list(self.frames)
-            system, content = P["initial_system"], [*content, _text(P["initial_user"])]
+            # amp-split: in vdm a scene call mid-episode answers the agent's question about now
+            now = self.vision == "vdm" and bool(shown)
+            system = P["now_system" if now else "initial_system"]
+            content = [*content, _text(P["now_user" if now else "initial_user"])]
             for c in cams:
                 content += [_text(P["view"].format(cam=c)), self.vdm_image(self.frames[c])]
         else:
@@ -854,8 +865,9 @@ class Agent:
             seen = VDM_NOTES["views"].format(cams=seen, paths=", ".join(views))
         info = {"mode": mode, "cams": cams, "views": views, "before_step": self.before_step
                 if mode != "scene" else None, "after_step": self.frames_step}
-        system = f"{system} {P['qualitative']}"
-        content.append(_text(P["qualitative"]))
+        rule = P["qualitative_vdm" if self.vision == "vdm" else "qualitative"]
+        system = f"{system} {rule}"
+        content.append(_text(rule))
         text, err = self.vdm_ask(system, content, info)
         if text is None:
             note = VDM_NOTES["unavailable"].format(error=err)

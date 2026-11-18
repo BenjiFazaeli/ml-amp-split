@@ -217,9 +217,10 @@ def image_blocks(root: Path, rel: str, caption: str | None,
 
 def python_result(res, timeout_s: float, root: Path, kernel_uid: int | None = None,
                   interrupted: str | None = None, *,
-                  attach: bool = True) -> tuple[list[dict], bool]:
+                  attach: bool = True, labels: bool = False) -> tuple[list[dict], bool]:
     """A kernel result as (tool_result content, is_error); interrupted replaces the timeout line;
-    attach False leaves the shown images out (vision "vdm_strict")."""
+    attach False leaves the shown images out (vision "vdm_strict"); labels, with attach False,
+    still lists their saved paths and captions (vision "vdm", amp-split)."""
     images = [im for im in res.images or [] if im.get("path")] if attach else []
     parts = []
     if res.stdout:
@@ -233,6 +234,10 @@ def python_result(res, timeout_s: float, root: Path, kernel_uid: int | None = No
         parts.append(interrupted or f"[interrupted: timed out after {timeout_s:.0f} s]")
     if not parts:
         parts.append("(no output)")
+    if labels and not attach:
+        saved = [im for im in res.images or [] if im.get("path")][:MAX_SHOWN]
+        parts += [f"image {im['path']}" + (f": {im['caption']}" if im.get("caption") else "")
+                  for im in saved]
     blocks = [{"type": "text", "text": "\n".join(parts)}]
     for im in images[:MAX_SHOWN]:
         blocks += image_blocks(root, str(im.get("path")), im.get("caption"), kernel_uid)
