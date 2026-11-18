@@ -57,7 +57,7 @@ from .store import is_final_record, read_record, strip_tokens, write_json
 AGENT_MODULE = "amp.agents.run"
 PRACTICE_AGENT = ("-m", "amp.practice.agent")
 TEXT_AGENT = ("-m", "amp.agents_text.run")
-TEXT_VISIONS = ("vdm_strict",)
+TEXT_VISIONS = ("vdm_strict", "vdm")
 UNCLEAN_END_REASONS = frozenset({"api_error", "kernel_error", "crash", "killed", "unknown",
                                  "episode_over_before_start"})
 AGENT_KILLS = frozenset({"timeout", "idle"})

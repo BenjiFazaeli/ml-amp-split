@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 PROVIDERS = ("anthropic", "gemini", "openai-chat")
 REASONING_KINDS = ("effort", "thinking", "none")
-VISIONS = ("image", "vdm_strict")
+VISIONS = ("image", "vdm_strict", "vdm")
 
 CONTEXT_WINDOWS: dict[str, int] = {
     "claude-opus-5-5": 1_000_000,

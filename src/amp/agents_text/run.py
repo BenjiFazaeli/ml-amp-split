@@ -190,7 +190,8 @@ def run(ep_dir: Path, *, tracer=None, registry=None, kernel_cls=None, episode_cl
                   zero_shot=cfg.protocol.zero_shot, max_turns=prof.max_turns,
                   wall_s=prof.wall_s, max_cost_usd=prof.max_cost_usd, meta=meta,
                   judged_by_self=judged_by_self,
-                  official=Official(client, key) if key else None, vdm_llm=vdm)
+                  official=Official(client, key) if key else None, vdm_llm=vdm,
+                  vision=prof.vision)
     try:
         agent.run()
     finally:

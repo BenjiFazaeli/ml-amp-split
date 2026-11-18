@@ -173,7 +173,7 @@ def vision_fields(vision: str | None, vdm_model: str | None = None) -> dict[str,
     vision = vision or "image"
     if vision == "image":
         if vdm_model:
-            raise ValueError("--vdm-model needs --vision vdm_strict")
+            raise ValueError("--vdm-model needs --vision vdm or vdm_strict")
         return {}
     if vision not in VISIONS:
         raise ValueError(f"vision {vision!r} not in {', '.join(VISIONS)}")

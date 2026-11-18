@@ -115,7 +115,7 @@ class Agent:
                  max_turns: int = 300, wall_s: float = 7200, max_cost_usd: float = 80.0,
                  meta: dict | None = None,
                  cameras: tuple[str, ...] = CAMERAS, judged_by_self: bool = False,
-                 official=None, vdm_llm=None):
+                 official=None, vdm_llm=None, vision: str | None = None):
         self.dir = Path(episode_dir).resolve()
         self.info = json.loads((self.dir / "episode.json").read_text())
         self.llm, self.kernel_factory, self.ep = llm, kernel_factory, episode
@@ -124,7 +124,7 @@ class Agent:
         self.preloaded = tuple(preloaded)
         self.judged_by_self = judged_by_self
         self.vdm = vdm_llm
-        self.vision = "vdm_strict" if vdm_llm is not None else "image"
+        self.vision = vision or ("vdm_strict" if vdm_llm is not None else "image")
         self.tools = (T.tools_for(self.preloaded, judged_by_self, vision=self.vision)
                       if tools is None else tools)
         self.zero_shot = zero_shot

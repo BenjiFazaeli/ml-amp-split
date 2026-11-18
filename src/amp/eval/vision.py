@@ -14,12 +14,14 @@ from amp.contracts.eval import Arm
 
 def add_arguments(ap: argparse.ArgumentParser) -> None:
     """The vision flags, as `amp eval robolab` and `amp eval capgym` take them."""
-    ap.add_argument("--vision", choices=("image", "vdm_strict"), default="image",
+    ap.add_argument("--vision", choices=("image", "vdm_strict", "vdm"), default="image",
                     help="how the model sees: image (default); vdm_strict: no images, a vision "
                     "model describes the cameras in text, and the model's code "
-                    "gets no camera images either")
+                    "gets no camera images either; vdm: no images for the model, a vision "
+                    "model describes the cameras and the views its code shows, and the code "
+                    "keeps the harness's camera, depth and perception data")
     ap.add_argument("--vdm-model", default=None,
-                    help="the vision model of --vision vdm_strict (default opus-5.5)")
+                    help="the vision model of --vision vdm or vdm_strict (default opus-5.5)")
 
 
 def profile_kwargs(a: argparse.Namespace) -> dict:
