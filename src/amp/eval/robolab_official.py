@@ -700,9 +700,11 @@ def _prompt_names(d: Path) -> set[str] | None:
 
 def make_profile(model: str, reasoning: str | None = None, prompt: str | None = None,
                  extra: dict | None = None, *, prompts: Path | None = None,
-                 vision: str | None = None, vdm_model: str | None = None):
+                 vision: str | None = None, vdm_model: str | None = None,
+                 max_turns: int | None = None, wall_s: float | None = None):
     """The harness configuration's AgentProfile; refuses unknown models, reasoning efforts,
-    prompts, vision models and bad extras."""
+    prompts, vision models and bad extras. max_turns and wall_s, when given, replace the
+    profile's per-episode limits (amp-split patch; the defaults are the paper's)."""
     from amp.agents.models import profile, vision_fields
 
     names = _prompt_names(prompts or Path(__file__).resolve().parents[1] / "agents" / "prompts")
@@ -711,6 +713,10 @@ def make_profile(model: str, reasoning: str | None = None, prompt: str | None = 
     kw = {"prompt": prompt} if prompt else {}
     if extra:
         kw["extra"] = dict(extra)
+    if max_turns is not None:
+        kw["max_turns"] = int(max_turns)
+    if wall_s is not None:
+        kw["wall_s"] = float(wall_s)
     try:
         kw.update(vision_fields(vision, vdm_model))
     except (KeyError, ValueError) as e:
@@ -784,11 +790,18 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--gateway-port", type=int, default=8710)
     ap.add_argument("--server-base-port", type=int, default=9600)
     ap.add_argument("--max-restarts", type=int, default=MAX_RESTARTS)
+    ap.add_argument("--max-turns", type=int, default=None,
+                    help="per-episode turn limit of the agent (default: the profile's, 600); a "
+                         "shortened run is not the paper's protocol (amp-split patch)")
+    ap.add_argument("--wall-s", type=float, default=None,
+                    help="per-episode wall-clock limit of the agent in seconds (default: the "
+                         "profile's, 21600); see --max-turns (amp-split patch)")
     return ap
 
 
 def build_study(a: argparse.Namespace, tasks: Sequence[str], est: dict[str, float]) -> Study:
-    agent = make_profile(a.model, a.reasoning, a.prompt, **vision.profile_kwargs(a))
+    agent = make_profile(a.model, a.reasoning, a.prompt, **vision.profile_kwargs(a),
+                         max_turns=getattr(a, "max_turns", None), wall_s=getattr(a, "wall_s", None))
     arms = tuple(Arm(h.strip(), agent) for h in a.harness.split(",") if h.strip())
     vision.check(arms, a.sandbox)
     proto = EvalProtocol(sandbox=a.sandbox, instruction_type=a.instruction_type, official=True)
