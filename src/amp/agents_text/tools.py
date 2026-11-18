@@ -32,8 +32,15 @@ STRICT_PRELOADED_TEXT = {**PRELOADED_TEXT,
 STRICT_PYTHON_TAIL = (", and a vision model's description of what changed whenever the robot "
                       "moved or you show()ed a camera (you see no images, and your code gets no "
                       "camera, depth or perception data).")
+VDM_PRELOADED_TEXT = {**PRELOADED_TEXT,
+                      "show": "show(x=None, caption=None, *, camera=None) to have an image you "
+                              "made, or a camera, described by the vision model"}
+VDM_PYTHON_TAIL = (", and a vision model's description of what changed whenever the robot moved, "
+                   "and of the cameras and images you show()ed (you see no images yourself; your "
+                   "code has the harness's camera, depth and perception data).")
 _VISION_TEXT = {"image": ("PRELOADED_TEXT", None),
-                "vdm_strict": ("STRICT_PRELOADED_TEXT", "STRICT_PYTHON_TAIL")}
+                "vdm_strict": ("STRICT_PRELOADED_TEXT", "STRICT_PYTHON_TAIL"),
+                "vdm": ("VDM_PRELOADED_TEXT", "VDM_PYTHON_TAIL")}
 REPORT_FIELDS = ("outcome_belief", "interpretation", "plan", "steps", "key_images", "lessons")
 
 
