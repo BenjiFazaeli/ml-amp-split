@@ -39,6 +39,7 @@ from amp.agents_text.surface import (
     VDM_PROMPTS,
     VDM_SURFACE_VERSION,
     episode_over_text,
+    saved_images_text,
 )
 from amp.contracts.embodiment import DROID
 from amp.contracts.trace import NullTracer
@@ -424,8 +425,19 @@ class Agent:
             "steps_left": o.get("steps_left"), "max_steps": self.max_steps,
             "ended_by_itself": self.ended_by_itself()})
         end = self.over_status.get("end")
-        return episode_over_text(end, o, benchmark=self.robot_cameras is not None,
-                                 judged_by_self=self.judged_by_self, vdm=self.vdm is not None)
+        msg = episode_over_text(end, o, benchmark=self.robot_cameras is not None,
+                                judged_by_self=self.judged_by_self, vdm=self.vdm is not None)
+        if self.vision == "vdm":
+            msg += saved_images_text(self.saved_images())
+        return msg
+
+    def saved_images(self) -> list[str]:
+        """The image files under images/ that a report may name (oldest first)."""
+        try:
+            names = sorted(p.name for p in (self.dir / "images").iterdir())
+        except OSError:
+            return []
+        return [f"images/{n}" for n in names if self.image_ok(f"images/{n}")]
 
     def run_kernel(self, code: str, timeout_s: float, deadline: bool = False):
         try:

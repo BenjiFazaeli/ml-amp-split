@@ -55,7 +55,7 @@ def episode_over_text(end, obs: dict, benchmark: bool = False, judged_by_self: b
             steps_left=obs.get("steps_left"), mode=obs.get("mode"))
     return msg + (VDM_NOTES["over_tail"] if vdm else EPISODE_OVER["tail"])
 
-VDM_SURFACE_VERSION = 2
+VDM_SURFACE_VERSION = 3
 
 VDM_NOTES = {
     "diff": "[vision model] What changed between step {before} and step {after}, seen by {seen}:"
@@ -73,7 +73,23 @@ VDM_NOTES = {
                "show(camera=<name>, caption=...) asks the vision model",
     "over_tail": " Nothing more can be done in it. Now call submit_report.",
     "report_only": "The episode is over: only submit_report is available now.",
+    "saved": " The images saved in this episode, which key_images may name: {paths}.",
+    "saved_more": " ({n} earlier ones not listed)",
+    "saved_none": " No image was saved in this episode: key_images may be empty.",
 }
+
+SAVED_LISTED = 40
+
+
+def saved_images_text(paths: list[str]) -> str:
+    """vision vdm: the saved images, for the report (history trimming drops the results that
+    printed their paths, and the report phase runs no code)."""
+    if not paths:
+        return VDM_NOTES["saved_none"]
+    more = len(paths) - SAVED_LISTED
+    listed = ", ".join(paths[-SAVED_LISTED:]) + (VDM_NOTES["saved_more"].format(n=more)
+                                                if more > 0 else "")
+    return VDM_NOTES["saved"].format(paths=listed)
 
 VDM_PROMPTS = {
     "task": "The robot's task: {instruction}",
@@ -214,7 +230,8 @@ sizes, `annotate`, the 3D views and the collision checks.
   while steps remain.
 - Each answer of the vision model takes time from your wall-clock budget: show what helps you
   decide the next step, not every camera after every call.
-- In your report, `key_images` names images you showed, by the paths the results listed.
+- In your report, `key_images` names images you showed, by the paths the results listed (the
+  episode-over message lists them again).
 """,
 }
 
