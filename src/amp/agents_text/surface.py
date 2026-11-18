@@ -155,6 +155,49 @@ VISION_SECTIONS = {
   descend in short steps, since you are not given the table's height.
 - In your report, `key_images` may be empty: the camera views you asked about are not saved.
 """ + _JUDGE,
+    # amp-split: the text agent on a harness with full numeric perception.
+    "vdm": """\
+## How you see in this episode
+
+This section overrides everything above, the reference included, about seeing images. You see no
+images yourself: a separate vision model looks for you and answers in text, inside the result of
+your `python` call. Your code keeps everything else the reference describes: camera frames,
+depth, point clouds, camera calibration, the perceived objects with their ids, positions and
+sizes, `annotate`, the 3D views and the collision checks.
+
+- Your first `python` result carries its description of the scene at the start. After every call
+  that moved the robot (a motion or a gripper action), it describes what changed in every camera
+  between just before the motion and just after it.
+- `show(x, caption=None)` sends an image your code made to the vision model: an annotated camera
+  view, a crop, a 3D view, a render. `show(camera=<name>, caption=None)` sends it the plain current
+  frame of one camera. Write the caption as your question, for example
+  `show(ep.annotate(cam, objects=True), caption="which id is the banana, which the bowl?")` or
+  `show(camera="wrist", caption="is the banana between the fingers?")`. At most 6 per call. The
+  result lists the saved path of each image you showed; use those paths in your report.
+  `view_image` is not available.
+- **Numbers come from your code; identity and verification come from the vision model.** Take
+  positions, sizes, heights and distances from the perceived objects, depth and point clouds,
+  never from the vision model. Ask the vision model what things are and whether something
+  happened: which perceived id is the object the instruction means, whether perception merged or
+  split objects, whether a grasp held, whether an object is in or on its target.
+- **It answers only in words**: no pixel coordinates, distances, angles or sizes, even if you ask.
+  It does name the ids drawn on an image you show it, so draw them: `ep.annotate(cam,
+  objects=True)` puts every perceived id on a camera view. Ask for relations: left or right of, in
+  front of, behind, above, touching.
+- Wherever the text above or the reference tells you to look at the cameras, an image or a 3D
+  view, or to check ids against the images, show() that image with your question and judge from
+  the answer together with your numbers. Its descriptions can be vague or wrong: when they
+  disagree with the numbers, ask again about a second camera, and trust the measurements for
+  where things are.
+- If you must decide yourself that the task is done, ask the vision model about each part of the
+  instruction, about at least two cameras (two `show(camera=...)`, or two annotated views), before
+  you finish: ask it to describe where each object is relative to its target rather than to
+  answer yes or no, check its answer against the perceived positions, and fix anything unclear
+  while steps remain.
+- Each answer of the vision model takes time from your wall-clock budget: show what helps you
+  decide the next step, not every camera after every call.
+- In your report, `key_images` names images you showed, by the paths the results listed.
+""",
 }
 
 
