@@ -41,6 +41,14 @@ KIMI_K3 = "kimi-k3"
 GLM_53_FLASH = "zai-org/GLM-5.3-Flash"
 DEEPSEEK_V41_FLASH = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
 DEEPSEEK_BUDGET = 262144
+# amp-split patch: Ricursive Ripple-65B Preview, a text-only coder, and Google Gemma 4 31B-it, the
+# vision model of --vision vdm. Ripple's chat template has no thinking switch and replays
+# reasoning_content as <think> (clear_thinking defaults to false), so it gets native history and
+# no chat_template_kwargs; 16384 tokens bound a runaway turn. Gemma's template reads
+# enable_thinking (default false); vLLM refuses a max_tokens above the context, so its cap stays
+# well under the 32768 it is served with.
+RIPPLE_65B = "ricursiveAI/Ripple-65B-Preview"
+GEMMA_4_31B = "google/gemma-4-31B-it"
 FAMILY: dict[str, dict] = {
     KIMI_K3: {"efforts": EFFORT_MAP, "native_history": True, "max_tokens": THINKING_BUDGET},
     GLM_53_FLASH: {"efforts": EFFORT_MAP, "native_history": True,
@@ -49,6 +57,8 @@ FAMILY: dict[str, dict] = {
     DEEPSEEK_V41_FLASH: {"efforts": EFFORT_MAP, "native_history": True,
                          "max_tokens": DEEPSEEK_BUDGET,
                          "chat_template_kwargs": {"thinking": True}},
+    RIPPLE_65B: {"native_history": True, "max_tokens": 16384},
+    GEMMA_4_31B: {"max_tokens": 4096},
 }
 NATIVE = "_native"
 DEFAULT_CONTEXT = 262144

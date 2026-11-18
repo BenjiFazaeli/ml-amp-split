@@ -121,6 +121,23 @@ MODELS: dict[str, ModelSpec] = {m.key: m for m in (
         notes=f"Self-hosted (sglang or vLLM). {ALWAYS_THINKS}, with chat_template_kwargs "
               "thinking true (the server defaults to chat mode). Turns replay with their "
               "reasoning_content and tool_calls unchanged. A 262144-token completion."),
+    ModelSpec(
+        key="ripple-65b", label="Ripple-65B Preview",
+        provider="openai-chat", model_id=openai_chat.RIPPLE_65B,
+        context_tokens=131072, reasoning_kind="thinking", reasoning_levels=("on",),
+        default_reasoning="on", price_per_mtok=None, supports_images=False,
+        notes="amp-split patch. Self-hosted (vLLM, ripple tool and reasoning parsers). Text only: "
+              "a coder for --vision vdm or vdm_strict. Its template has no thinking switch, so "
+              "no chat_template_kwargs are sent; turns replay with their reasoning_content and "
+              "tool_calls unchanged. A 16384-token completion."),
+    ModelSpec(
+        key="gemma-4-31b", label="Gemma 4 31B",
+        provider="openai-chat", model_id=openai_chat.GEMMA_4_31B,
+        context_tokens=32768, reasoning_kind="thinking",
+        reasoning_levels=openai_chat.THINKING_LOW, default_reasoning="off", price_per_mtok=None,
+        notes="amp-split patch. Self-hosted (vLLM, gemma4 reasoning parser). The vision model of "
+              "--vision vdm: thinking off by default (enable_thinking false). A 4096-token "
+              "completion."),
 )}
 
 _ADHOC_BASE = {"anthropic": "opus-5.5", "gemini": "gemini-4-argon",
