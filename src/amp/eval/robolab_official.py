@@ -58,6 +58,10 @@ BEGIN_TIMEOUT_S = 840.0
 MAX_RESTARTS = 3
 KIT_START_LOCK_ENV = "AMP_KIT_START_LOCK"
 GATEWAY_UP_S = 60.0
+# amp-split patch: with --wall-s, the episode timeout is the agent's wall limit plus this. The agent
+# loop starts about 1 s after the runner's agent_start, and its report ran 113-332 s past the wall
+# limit in amp-split's four 60-minute episodes (jobs 7160104, 7161275): 600 s is 1.8x the worst.
+REPORT_ALLOWANCE_S = 600.0
 POLL_S = 0.5
 ROBOLAB_ROOT_ENV = "AMP_ROBOLAB_ROOT"
 ROBOLAB_PYTHON_ENV = "AMP_ROBOLAB_PYTHON"
@@ -391,7 +395,10 @@ class Launcher:
                "host": "127.0.0.1", "claim_timeout_s": 900.0, "request_timeout_s": 600.0}
         path = state / "config.json"
         path.write_text(json.dumps(cfg, sort_keys=True) + "\n")
-        argv = (self.python, "-m", "amp.gateway", "--config", str(path), "--poll-s", "1.0")
+        # amp-split patch: the gateway's episode timeout is the protocol's, so that ep.budget() and
+        # ep.status() count down the same limit as the agent (unset, both are the default 21600).
+        argv = (self.python, "-m", "amp.gateway", "--config", str(path), "--poll-s", "1.0",
+                "--episode-timeout-s", f"{self.study.protocol.episode_timeout_s:g}")
         spec = ProcSpec("gateway", argv, str(self.logs / "gateway.log"),
                         env={**envs.node_env(), "PYTHONPATH": str(own_src()),
                              "PYTHONUNBUFFERED": "1"},
@@ -795,8 +802,19 @@ def parser() -> argparse.ArgumentParser:
                          "shortened run is not the paper's protocol (amp-split patch)")
     ap.add_argument("--wall-s", type=float, default=None,
                     help="per-episode wall-clock limit of the agent in seconds (default: the "
-                         "profile's, 21600); see --max-turns (amp-split patch)")
+                         "profile's, 21600); the episode timeout, which ep.budget() counts down, "
+                         f"becomes this plus {REPORT_ALLOWANCE_S:g} s for the report; see "
+                         "--max-turns (amp-split patch)")
     return ap
+
+
+def episode_timeout_kwargs(wall_s: float | None) -> dict:
+    """The protocol's episode timeout for --wall-s (amp-split patch): the agent's limit plus
+    REPORT_ALLOWANCE_S, so the gateway (ep.budget(), ep.status()) and the runner's kill agree with
+    the agent's clock but never cut its report short. Unset: the protocol's default (the paper's)."""
+    if wall_s is None:
+        return {}
+    return {"episode_timeout_s": float(wall_s) + REPORT_ALLOWANCE_S}
 
 
 def build_study(a: argparse.Namespace, tasks: Sequence[str], est: dict[str, float]) -> Study:
@@ -804,7 +822,8 @@ def build_study(a: argparse.Namespace, tasks: Sequence[str], est: dict[str, floa
                          max_turns=getattr(a, "max_turns", None), wall_s=getattr(a, "wall_s", None))
     arms = tuple(Arm(h.strip(), agent) for h in a.harness.split(",") if h.strip())
     vision.check(arms, a.sandbox)
-    proto = EvalProtocol(sandbox=a.sandbox, instruction_type=a.instruction_type, official=True)
+    proto = EvalProtocol(sandbox=a.sandbox, instruction_type=a.instruction_type, official=True,
+                         **episode_timeout_kwargs(getattr(a, "wall_s", None)))
     job = a.job_id or Path(a.output).resolve().name
     return Study(arms=arms, corpus=None, tasks=tuple(tasks), episodes=a.num_runs,
                  protocol=proto, job_id=job, code_ref="local",
