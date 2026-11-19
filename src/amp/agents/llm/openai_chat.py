@@ -98,15 +98,32 @@ LEAD_RULE, RUN_RULE = f"lead{BANG_LEAD}", f"run{BANG_RUN}"
 THINKING_WRAP_UP = ("\n\nThat is enough thinking for this step. I will compute and check the rest "
                     "in code now.")
 THINK_OPEN, THINK_CLOSE = "<think>\n", "\n</think>\n"
+# Tokens a cut reply keeps for its wrap-up and its tool call (patch 0011). Ripple's calls in the
+# first seven episodes: p95 about 485 tokens, 1.4 percent over 1024.
+CUT_RESERVE = 1024
+# The resumed request's prompt is longer than the cut reply's by the wrap-up, the end of reasoning
+# and any difference in re-tokenizing the reasoning: kept off its max_tokens so that a reply whose
+# max_tokens was shrunk to fit the context still fits.
+RESUME_SLACK = 64
+
+
+def cut_point(budget: int, max_tokens: int) -> int:
+    """Where a reply's reasoning is cut: the budget, or earlier when the reply's own allowance is
+    smaller. Near the context's end plan_max_tokens shrinks max_tokens (to MIN_COMPLETION at
+    least), and a budget above it could never cut (episode C, MarkerInMug turn 84: 4096 tokens of
+    reasoning, no call, under a 6144 budget)."""
+    return max(1, min(int(budget), int(max_tokens) - CUT_RESERVE))
 
 
 class ThinkingCut(Exception):
     """parse() stopped a stream whose reasoning reached the thinking budget before any content."""
 
-    def __init__(self, reasoning: str, tokens: int, request_id: str, elapsed_s: float):
+    def __init__(self, reasoning: str, tokens: int, request_id: str, elapsed_s: float,
+                 limit: int | None = None):
         super().__init__(f"reasoning reached {tokens} tokens")
         self.reasoning, self.tokens = reasoning, tokens
         self.request_id, self.elapsed_s = request_id, elapsed_s
+        self.limit = tokens if limit is None else limit
 
 
 def reasoning_only(st: "SSE") -> bool:
@@ -121,7 +138,10 @@ def resume_body(body: dict, reasoning: str, used_tokens: int) -> dict:
     out["messages"] = list(body["messages"]) + [
         {"role": "assistant", "content": THINK_OPEN + reasoning + THINK_CLOSE}]
     out["continue_final_message"], out["add_generation_prompt"] = True, False
-    out["max_tokens"] = max(MIN_COMPLETION, int(body["max_tokens"]) - int(used_tokens))
+    # What is left of the cut reply's own allowance (patch 0011): its prompt now holds the
+    # reasoning, so a MIN_COMPLETION floor would overflow the context when max_tokens was shrunk
+    # to fit it. cut_point leaves at least CUT_RESERVE.
+    out["max_tokens"] = max(1, int(body["max_tokens"]) - int(used_tokens) - RESUME_SLACK)
     return out
 
 
@@ -632,9 +652,10 @@ class OpenAIChatClient(HTTPClient):
                     raise self.degenerate_retry(st, resp, rid, body["max_tokens"])
                 if self.thinking_budget is not None and self._resume is None:
                     used = (st.usage or {}).get("completion_tokens") or 0
-                    if used >= self.thinking_budget and reasoning_only(st):
+                    limit = cut_point(self.thinking_budget, body["max_tokens"])
+                    if used >= limit and reasoning_only(st):
                         raise ThinkingCut("".join(st.reasoning), int(used), st.id or rid,
-                                          time.monotonic() - resp.t0)
+                                          time.monotonic() - resp.t0, limit)
         if not st.done:
             raise Retry("stream ended before [DONE]")
         if self._resume is not None:
@@ -675,7 +696,7 @@ class OpenAIChatClient(HTTPClient):
             d["thinking_tokens"] = (d.get("thinking_tokens") or 0) + cut.tokens
         if isinstance(turn.native, dict):
             turn.native["thinking_cut"] = {
-                "budget": self.thinking_budget, "at_tokens": cut.tokens,
+                "budget": self.thinking_budget, "cut_point": cut.limit, "at_tokens": cut.tokens,
                 "first_request_id": cut.request_id, "first_elapsed_s": round(cut.elapsed_s, 3),
                 "wrap_up": THINKING_WRAP_UP.strip()}
 
