@@ -784,7 +784,8 @@ def parser() -> argparse.ArgumentParser:
                     help="episodes per task (RoboLab's --num-runs); the paper runs 10 per task on "
                          "RoboLab-120, 1,200 per model (default 10)")
     ap.add_argument("--gpus", default="auto", help="auto (every NVIDIA GPU that is not busy), or GPU indices or UUIDs")
-    ap.add_argument("--slots-per-gpu", default="auto", help="auto or 1 (one Kit per GPU)")
+    ap.add_argument("--slots-per-gpu", default="auto",
+                    help="auto (one Kit per GPU) or 1-2 Kits per GPU, each running its own task")
     ap.add_argument("--output", required=True, type=Path, help="the run folder; reuse to resume")
     ap.add_argument("--job-id", default=None, help="default: the --output folder's name")
     ap.add_argument("--sandbox", default="auto", choices=("auto", "bwrap"))

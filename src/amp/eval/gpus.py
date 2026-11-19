@@ -16,10 +16,14 @@ from dataclasses import dataclass
 GIB = 1024**3
 MIB = 1024**2
 MAX_USED_GIB = 4.0
-KIT_VRAM_GIB = 12.0
+# A Kit's VRAM for the slot bound: "about 9 GB" in validation (docs/quickstart.md) plus 2 GiB, so
+# two Kits fit a 22.5 GiB RTX 6000 (amp-split patch 0012; was 12.0, which allowed one).
+KIT_VRAM_GIB = 11.0
 KIT_RSS_GIB = 18.0
 HOST_RESERVE_GIB = 16.0
 AUTO_MAX_SLOTS = 1
+# Kits per GPU that an explicit --slots-per-gpu may ask for (amp-split patch 0012); auto stays 1.
+MAX_SLOTS = 2
 SMALL_WARNING = ("warning: GPU {index} {name} has {gib:.1f} GiB of VRAM; a Kit used about 9 GB in "
                  "validation and may not fit; pass --gpus to leave it out")
 QUERY = ("--query-gpu=index,uuid,name,memory.total,memory.used", "--format=csv,noheader,nounits")
@@ -151,7 +155,7 @@ def ram_bound(n_gpus: int, ram_bytes: int) -> int:
 
 
 def slots_per_gpu(spec: str, gpus: Sequence[Gpu], *, ram_bytes: int | None = None) -> int:
-    """Kits per GPU for --slots-per-gpu auto|1, bounded by host RAM and the smallest GPU's VRAM (never below one)."""
+    """Kits per GPU for --slots-per-gpu auto|1..MAX_SLOTS, bounded by host RAM and the smallest GPU's VRAM (never below one); auto picks at most AUTO_MAX_SLOTS."""
     ram = host_ram_bytes() if ram_bytes is None else ram_bytes
     by_ram = ram_bound(len(gpus), ram)
     by_vram = min(max(1, int(g.total_gib // KIT_VRAM_GIB)) for g in gpus) if gpus else 0
@@ -166,9 +170,10 @@ def slots_per_gpu(spec: str, gpus: Sequence[Gpu], *, ram_bytes: int | None = Non
         n = int(spec)
     except ValueError:
         raise GpuError(f"--slots-per-gpu {spec!r} is not auto or an integer") from None
-    if n < 1 or n > AUTO_MAX_SLOTS:
-        raise GpuError(f"--slots-per-gpu must be auto or {AUTO_MAX_SLOTS}")
+    if n < 1 or n > MAX_SLOTS:
+        raise GpuError(f"--slots-per-gpu must be auto or 1..{MAX_SLOTS}")
     if n > bound:
-        raise GpuError(f"--slots-per-gpu {n} exceeds what this host holds ({bound}: "
-                       f"{ram / GIB:.0f} GiB RAM, {KIT_RSS_GIB:g} GiB per Kit)")
+        raise GpuError(f"--slots-per-gpu {n} exceeds what this host holds ({bound}: {by_ram} by "
+                       f"{ram / GIB:.0f} GiB RAM at {KIT_RSS_GIB:g} GiB per Kit, {by_vram} by "
+                       f"VRAM at {KIT_VRAM_GIB:g} GiB per Kit)")
     return n
