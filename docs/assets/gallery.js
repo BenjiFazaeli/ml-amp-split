@@ -302,81 +302,146 @@ document.addEventListener("DOMContentLoaded", () => {
     update();
 });
 
+// One player: the demo video starts pinned behind the title, folds into its slot over scrollY 0 -> T and is released
+// there. T puts the "Demo video" heading just below the navbar. Reduced motion: no fly, no autoplay, native controls.
 document.addEventListener("DOMContentLoaded", () => {
-    const panel = document.querySelector(".hero-wrap");
-    if (!panel) return;
-    const hero = panel.querySelector(".hero");
-    const sheet = panel.querySelector(".hero-sheet");
-    const text = panel.querySelector(".hero-text");
-    const cue = panel.querySelector(".hero-cue");
-    const vid = panel.querySelector(".hero-vid");
-    if (!hero || !sheet || !text) return;
+    const root = document.documentElement;
+    const hero = document.querySelector(".hero");
+    const vid = document.querySelector("#demo-video .demo-vid");
+    if (!hero || !vid) return;
+    const slot = vid.parentElement;
+    const section = document.getElementById("demo-video");
+    const head = section.querySelector("h2");
+    const nav = document.querySelector(".navbar.fixed-top");
+    const menu = nav && nav.querySelector(".navbar-collapse");
+    const toggler = nav && nav.querySelector(".navbar-toggler");
+    const runway = document.querySelector(".hero-runway");
+    const sheet = hero.querySelector(".hero-sheet");
+    const text = hero.querySelector(".hero-text");
+    const cue = hero.querySelector(".hero-cue");
 
-    const motionOK = window.matchMedia
-        ? window.matchMedia("(prefers-reduced-motion: reduce)")
-        : {matches: false, addEventListener: null};
     const clamp = x => (x < 0 ? 0 : x > 1 ? 1 : x);
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const ease = t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
-    let armed = false, raf = 0, inView = true, waiting = false;
+    let on = false, T = 1, R = 0, raf = 0, flying = false, inView = true, waiting = false, held = false, ours = false;
 
+    const docTop = el => el.getBoundingClientRect().top + window.scrollY;
+    // The bar alone: an open phone menu (resize fires as a mobile toolbar hides) must not shorten the fold.
+    const barHeight = () => {
+        if (!nav) return 0;
+        const open = menu && toggler && getComputedStyle(toggler).display !== "none"
+            && (menu.classList.contains("show") || menu.classList.contains("collapsing"));
+        return nav.getBoundingClientRect().height - (open ? menu.getBoundingClientRect().height : 0);
+    };
+    const measure = () => {
+        T = Math.max(1, docTop(head || slot) - barHeight() - 20);
+        R = parseFloat(getComputedStyle(slot).borderTopLeftRadius) || 0;
+    };
+    const fly = yes => {
+        if (yes === flying) return;
+        flying = yes;
+        vid.classList.toggle("is-flying", yes);
+        slot.classList.toggle("is-away", yes);
+        vid.controls = !yes;
+        if (!yes) for (const k of ["left", "top", "width", "height", "borderRadius"]) vid.style[k] = "";
+    };
     const frame = () => {
         raf = 0;
-        if (!armed) return;
-        const travel = Math.max(1, panel.offsetHeight - hero.offsetHeight);
-        const p = clamp(window.scrollY / travel);
-        const q = clamp(p / 0.45);
+        if (!on) return;
+        const p = clamp(window.scrollY / T), q = clamp(p / 0.45), e = ease(clamp((p - 0.45) / 0.55));
         const opacity = 1 - clamp(q * 1.6);
-        text.style.opacity = String(opacity);
-        text.style.transform = `translate3d(0,${(-q * 14).toFixed(2)}svh,0)`;
-        text.style.visibility = opacity < 0.02 ? "hidden" : "";
-        sheet.style.opacity = String(1 - q);
+        if (text) {
+            text.style.opacity = String(opacity);
+            text.style.transform = `translate3d(0,${(-q * 14).toFixed(2)}svh,0)`;
+            text.style.visibility = opacity < 0.02 ? "hidden" : "";
+        }
+        if (sheet) sheet.style.opacity = String(1 - q);
         if (cue) cue.style.opacity = String(1 - clamp(q * 3));
+        if (p >= 1) { fly(false); return; }
+        fly(true);
+        const r = slot.getBoundingClientRect(), vw = root.clientWidth, vh = window.innerHeight;
+        Object.assign(vid.style, {
+            left: `${lerp(0, r.left, e)}px`, top: `${lerp(0, r.top, e)}px`,
+            width: `${lerp(vw, r.width, e)}px`, height: `${lerp(vh, r.height, e)}px`,
+            borderRadius: `${lerp(0, R, e)}px`,
+        });
     };
     const tick = () => { if (!raf) raf = requestAnimationFrame(frame); };
 
     const GESTURES = ["touchend", "click", "keydown"];
     const onGesture = () => {
         stopWaiting();
-        if (armed && inView) start();
+        if (on && inView) start();
     };
     const stopWaiting = () => {
         waiting = false;
         GESTURES.forEach(type => window.removeEventListener(type, onGesture, true));
     };
     const waitForGesture = () => {
-        if (waiting || !armed) return;
+        if (waiting || !on) return;
         waiting = true;
         GESTURES.forEach(type => window.addEventListener(type, onGesture, {capture: true, passive: true}));
     };
     const start = () => {
+        if (held) return;
         vid.preload = "auto";
         const p = vid.play();
         if (p) p.catch(e => { if (e && e.name === "NotAllowedError") waitForGesture(); });
     };
-    if (vid) {
-        const live = () => vid.classList.add("live");
-        vid.addEventListener("playing", live);
-        if (!vid.paused && vid.readyState >= 3) live();
-    }
+    // A pause the visitor made with the controls holds until they play again; only ours resume by themselves.
+    const pause = () => { if (!vid.paused) { ours = true; vid.pause(); } };
+    vid.addEventListener("pause", () => { if (!ours && !flying) held = true; ours = false; });
+    vid.addEventListener("play", () => { held = false; });
 
-    const arm = on => {
-        armed = on;
-        if (!vid) {}
-        else if (on && inView) start();
-        else vid.pause();
-        if (!on) stopWaiting();
-        if (on) { frame(); return; }
+    const setOn = v => {
+        on = v;
+        root.classList.toggle("fly-on", v);
+        vid.controls = !(v && flying);
+        if (v) {
+            measure();
+            frame();
+            if (inView) start();
+            return;
+        }
+        fly(false);
+        stopWaiting();
+        pause();
         for (const el of [sheet, text, cue]) if (el) el.removeAttribute("style");
     };
-    if (vid && "IntersectionObserver" in window) new IntersectionObserver(([e]) => {
-        inView = e.isIntersecting;
-        if (!inView) vid.pause();
-        else if (armed) start();
-    }).observe(panel);
 
+    // Watch the hero, the runway and the section together: while flying the video is fixed, so its own box says nothing.
+    if ("IntersectionObserver" in window) {
+        const seen = new Set();
+        const io = new IntersectionObserver(entries => {
+            for (const e of entries) e.isIntersecting ? seen.add(e.target) : seen.delete(e.target);
+            const was = inView;
+            inView = seen.size > 0;
+            if (!inView) pause();
+            else if (!was && on) start();
+        });
+        for (const el of [hero, runway, section]) if (el) io.observe(el);
+    }
+
+    const remeasure = () => { if (on) { measure(); tick(); } };
     window.addEventListener("scroll", tick, {passive: true});
-    window.addEventListener("resize", tick, {passive: true});
-    window.addEventListener("load", tick);
-    if (motionOK.addEventListener) motionOK.addEventListener("change", e => arm(!e.matches));
-    arm(!motionOK.matches);
+    window.addEventListener("resize", remeasure, {passive: true});
+    window.addEventListener("orientationchange", remeasure);
+    window.addEventListener("load", remeasure);
+    if (REDUCED_MOTION.addEventListener) REDUCED_MOTION.addEventListener("change", e => setOn(!e.matches));
+    setOn(!REDUCED_MOTION.matches);
+
+    // The runway exists only from here on, so a deep link the browser already followed lands 35vh short.
+    // A reload or back/forward keeps the position the browser restored.
+    const fresh = (performance.getEntriesByType?.("navigation")[0]?.type ?? "navigate") === "navigate";
+    let target = null;
+    try { target = on && fresh && location.hash.length > 1 && document.getElementById(decodeURIComponent(location.hash.slice(1))); } catch (e) {}
+    if (target) {
+        let moved = false;
+        const stop = () => { moved = true; };
+        ["wheel", "touchstart", "keydown", "mousedown"].forEach(type => window.addEventListener(type, stop, {once: true, passive: true}));
+        const land = () => { if (!moved) target.scrollIntoView({block: "start", behavior: "instant"}); };
+        land();
+        window.addEventListener("load", land, {once: true});
+    }
 });

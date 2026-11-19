@@ -75,7 +75,7 @@ const END_HOLD = {"RoboLab-120": 250};
 const whenParsed = fn => document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", fn) : fn();
 const LOADING_EVENTS = ["play", "playing", "pause", "waiting", "seeking", "seeked", "canplay", "loadeddata", "ended", "error", "emptied"];
 const showLoading = ({target: video}) => {
-    if (!(video instanceof HTMLVideoElement) || video.classList.contains("hero-vid")) return;
+    if (!(video instanceof HTMLVideoElement) || video.classList.contains("demo-vid")) return;
     video.parentElement?.classList.toggle("is-loading",
         !video.error && (video.seeking || (!video.paused && video.readyState < video.HAVE_FUTURE_DATA)));
 };

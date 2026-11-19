@@ -90,19 +90,8 @@ html {
     max-width: 1140px;
 }
 
-:root {
-    --hero-runway: 60svh;
-}
-
-.hero-wrap {
-    position: relative;
-    z-index: 0;
-    height: calc(100svh + var(--hero-runway));
-}
-
 .hero {
-    position: sticky;
-    top: 0;
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -112,7 +101,6 @@ html {
 }
 
 .hero-poster,
-.hero-vid,
 .hero-sheet {
     position: absolute;
     inset: 0;
@@ -121,18 +109,16 @@ html {
     pointer-events: none;
 }
 
-.hero-poster,
-.hero-vid {
+.hero-poster {
     object-fit: cover;
     background: #000;
 }
 
-.js .hero-vid {
-    opacity: 0;
-    transition: opacity 0.5s ease-out;
-}
-
-.js .hero-vid.live { opacity: 1; }
+/* While the fly is on, the demo video (its poster until it plays) is the title's background. */
+.fly-on .hero-poster { display: none; }
+.fly-on .hero-sheet { position: fixed; z-index: 3; }
+.hero-runway { height: 0; }
+.fly-on .hero-runway { height: 35vh; }
 
 .hero-sheet {
     background:
@@ -142,7 +128,7 @@ html {
 
 .hero-text {
     position: relative;
-    z-index: 2;
+    z-index: 4;
     width: 100%;
     max-width: 1140px;
     padding: 0 16px;
@@ -238,7 +224,7 @@ html {
     position: absolute;
     left: 50%;
     bottom: clamp(22px, 3.4vw, 36px);
-    z-index: 2;
+    z-index: 4;
     width: 1px;
     height: 40px;
     margin-left: -0.5px;
@@ -287,14 +273,44 @@ html {
     background: var(--bs-body-bg);
 }
 
+/* Above the rest of the page, so nothing below climbs over the flying video. */
+#demo-video {
+    position: relative;
+    z-index: 3;
+}
+
+.demo-wrap {
+    position: relative;
+    max-width: min(100%, calc((100svh - 150px) * 16 / 9));
+    margin: 0 auto;
+    aspect-ratio: 16 / 9;
+    border-radius: 14px;
+}
+
+.demo-vid {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
+    background: #000;
+}
+
+html:not(.js) .demo-wrap > video { display: none; }
+
+.demo-vid.is-flying {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 2;
+    pointer-events: none;
+}
+
 @media (max-width: 575.98px) {
-    :root { --hero-runway: 42svh; }
     .hero-cue { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    :root { --hero-runway: 0px; }
-    .hero { position: static; }
     .js .hero-cue::after { animation: none; top: 0; }
     .js .hero-text [data-hero] { animation: none; opacity: 1; transform: none; }
 }
