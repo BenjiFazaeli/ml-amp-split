@@ -88,6 +88,41 @@ BANG_LEAD = 32
 BANG_RUN = 256
 DEGENERATE = "degenerate"
 LEAD_RULE, RUN_RULE = f"lead{BANG_LEAD}", f"run{BANG_RUN}"
+# amp-split patch 0010: the coder's reasoning budget (--thinking-budget), enforced here. vLLM 0.34's
+# own thinking_token_budget matches the end of reasoning as token ids, and with Ripple's template a
+# reasoning end before a tool call ("</think>\n\n<tool_call>") tokenizes '</' 'think' '>\n\n',
+# which the ripple parser's '</' 'think' '>\n' never matches: it would count every earlier turn as
+# open reasoning (amp-split scripts/check_budget_tokens.py, job 7163778). Instead the stream is
+# stopped once its reasoning reaches the budget with no content yet, and the same reply is resumed
+# (continue_final_message) after THINKING_WRAP_UP and the end of reasoning.
+THINKING_WRAP_UP = ("\n\nThat is enough thinking for this step. I will compute and check the rest "
+                    "in code now.")
+THINK_OPEN, THINK_CLOSE = "<think>\n", "\n</think>\n"
+
+
+class ThinkingCut(Exception):
+    """parse() stopped a stream whose reasoning reached the thinking budget before any content."""
+
+    def __init__(self, reasoning: str, tokens: int, request_id: str, elapsed_s: float):
+        super().__init__(f"reasoning reached {tokens} tokens")
+        self.reasoning, self.tokens = reasoning, tokens
+        self.request_id, self.elapsed_s = request_id, elapsed_s
+
+
+def reasoning_only(st: "SSE") -> bool:
+    """Nothing but reasoning streamed so far: no content text and no tool call."""
+    return not "".join(st.content).strip() and not st.tool_calls
+
+
+def resume_body(body: dict, reasoning: str, used_tokens: int) -> dict:
+    """The request that resumes a cut reply: the same conversation with the reply so far, its
+    reasoning closed, as the final assistant message to continue (amp-split patch 0010)."""
+    out = {k: v for k, v in body.items() if k != "messages"}
+    out["messages"] = list(body["messages"]) + [
+        {"role": "assistant", "content": THINK_OPEN + reasoning + THINK_CLOSE}]
+    out["continue_final_message"], out["add_generation_prompt"] = True, False
+    out["max_tokens"] = max(MIN_COMPLETION, int(body["max_tokens"]) - int(used_tokens))
+    return out
 
 
 def image_size(b64: str) -> tuple[int, int] | None:
@@ -450,7 +485,8 @@ class OpenAIChatClient(HTTPClient):
                  max_effort: str | None = None, price: dict | None = None,
                  read_timeout_s: float = 900.0, degenerate_resamples: int | None = None,
                  efforts: dict[str, str] | None = None, native_history: bool | None = None,
-                 chat_template_kwargs: dict | None = None, family: str | None = None, **kw):
+                 chat_template_kwargs: dict | None = None, family: str | None = None,
+                 thinking_budget: int | None = None, **kw):
         fam = FAMILY.get(family or model, {})
         efforts = fam.get("efforts") if efforts is None else efforts
         native_history = fam.get("native_history", False) if native_history is None \
@@ -473,6 +509,9 @@ class OpenAIChatClient(HTTPClient):
         self.context_tokens: int | None = context_tokens or DEFAULT_CONTEXT
         self.context_window = context_window(model)
         self.max_tokens = max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS
+        # amp-split patch: reasoning tokens per reply, then the reply is cut and resumed
+        self.thinking_budget = None if thinking_budget is None else int(thinking_budget)
+        self._resume: dict | None = None     # the cut reply being resumed (amp-split patch)
         self.price = price
         self.base_url = base_url.rstrip("/")
         if degenerate_resamples is not None:
@@ -542,6 +581,8 @@ class OpenAIChatClient(HTTPClient):
                 "stream": True, "stream_options": {"include_usage": True}}
         if "tools" in conv:
             body["tools"] = conv["tools"]
+        if self.thinking_budget is not None:     # amp-split patch: the token count while streaming
+            body["stream_options"]["continuous_usage_stats"] = True
         if self.efforts is not None:
             body["reasoning_effort"] = self.efforts[self.thinking]
         kw = self.template_kwargs()
@@ -589,9 +630,18 @@ class OpenAIChatClient(HTTPClient):
                 st.feed(payload)
                 if st.degenerate:
                     raise self.degenerate_retry(st, resp, rid, body["max_tokens"])
+                if self.thinking_budget is not None and self._resume is None:
+                    used = (st.usage or {}).get("completion_tokens") or 0
+                    if used >= self.thinking_budget and reasoning_only(st):
+                        raise ThinkingCut("".join(st.reasoning), int(used), st.id or rid,
+                                          time.monotonic() - resp.t0)
         if not st.done:
             raise Retry("stream ended before [DONE]")
+        if self._resume is not None:
+            st.reasoning.insert(0, self._resume["reasoning"])
         turn = self._turn(st, self._schemas, rid, body["max_tokens"])
+        if self._resume is not None:
+            self.merge_cut(turn, self._resume["cut"])
         cost = self.header_cost(headers)
         if cost is not None:
             turn.cost_usd, turn.cost_source = cost, "header"
@@ -599,6 +649,35 @@ class OpenAIChatClient(HTTPClient):
             turn.cost_usd, turn.cost_source = self.computed(
                 turn.usage, per_token_cost(turn.usage, self.price, inclusive=True), True)
         return turn
+
+    def once(self, payload: bytes, body: dict, force_token: bool, attempt: int) -> Turn:
+        """One request; a reply that parse() cut at the thinking budget is resumed once, after
+        THINKING_WRAP_UP (amp-split patch 0010). A failure while resuming retries the whole turn."""
+        try:
+            return super().once(payload, body, force_token, attempt)
+        except ThinkingCut as cut:
+            reasoning = cut.reasoning.rstrip() + THINKING_WRAP_UP
+            body2 = resume_body(body, reasoning, cut.tokens)
+            payload2 = json.dumps(body2).encode()
+            self.observer.request(body2, payload2, attempt)
+            self._resume = {"reasoning": reasoning, "cut": cut}
+            try:
+                return super().once(payload2, body2, force_token, attempt)
+            finally:
+                self._resume = None
+
+    def merge_cut(self, turn: Turn, cut: ThinkingCut) -> None:
+        """A resumed reply's turn: the cut request's tokens counted, the cut recorded."""
+        u = turn.usage
+        if isinstance(u, dict):
+            u["output_tokens"] = (u.get("output_tokens") or 0) + cut.tokens
+            d = u.setdefault("output_tokens_details", {})
+            d["thinking_tokens"] = (d.get("thinking_tokens") or 0) + cut.tokens
+        if isinstance(turn.native, dict):
+            turn.native["thinking_cut"] = {
+                "budget": self.thinking_budget, "at_tokens": cut.tokens,
+                "first_request_id": cut.request_id, "first_elapsed_s": round(cut.elapsed_s, 3),
+                "wrap_up": THINKING_WRAP_UP.strip()}
 
     def degenerate_retry(self, st: SSE, rec, rid: str, max_tokens: int) -> Retry:
         """The Retry that cuts a degenerate stream; its partial output is never a turn."""

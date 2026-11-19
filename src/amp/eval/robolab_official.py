@@ -44,6 +44,7 @@ from amp.contracts.eval import (
     is_retryable,
     unit_name,
 )
+from amp.contracts.model import THINKING_BUDGET_KEY
 from amp.contracts.trace import NullTracer
 
 from . import envs, gpus, robolab_merge, vision
@@ -805,6 +806,12 @@ def parser() -> argparse.ArgumentParser:
                          "profile's, 21600); the episode timeout, which ep.budget() counts down, "
                          f"becomes this plus {REPORT_ALLOWANCE_S:g} s for the report; see "
                          "--max-turns (amp-split patch)")
+    ap.add_argument("--thinking-budget", type=int, default=None, metavar="TOKENS",
+                    help="the coder's reasoning tokens per reply (openai-chat): at that many, "
+                         "with no content yet, the client stops the stream and resumes the reply "
+                         "after a wrap-up sentence; stated in the vdm prompt section; default none. "
+                         "Recorded in the profile's extra, not in the arm id, so a budget run needs "
+                         "its own --output (amp-split patch)")
     return ap
 
 
@@ -817,8 +824,19 @@ def episode_timeout_kwargs(wall_s: float | None) -> dict:
     return {"episode_timeout_s": float(wall_s) + REPORT_ALLOWANCE_S}
 
 
+def thinking_extra(budget: int | None) -> dict | None:
+    """The profile extra for --thinking-budget (amp-split patch); ValueError unless positive."""
+    if budget is None:
+        return None
+    if int(budget) <= 0:
+        raise ValueError(f"--thinking-budget must be a positive number of tokens, not {budget}")
+    return {THINKING_BUDGET_KEY: int(budget)}
+
+
 def build_study(a: argparse.Namespace, tasks: Sequence[str], est: dict[str, float]) -> Study:
-    agent = make_profile(a.model, a.reasoning, a.prompt, **vision.profile_kwargs(a),
+    agent = make_profile(a.model, a.reasoning, a.prompt,
+                         thinking_extra(getattr(a, "thinking_budget", None)),
+                         **vision.profile_kwargs(a),
                          max_turns=getattr(a, "max_turns", None), wall_s=getattr(a, "wall_s", None))
     arms = tuple(Arm(h.strip(), agent) for h in a.harness.split(",") if h.strip())
     vision.check(arms, a.sandbox)

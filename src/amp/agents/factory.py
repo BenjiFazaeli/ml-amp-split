@@ -14,7 +14,7 @@ from amp.agents.context_windows import context_window
 from amp.agents.credentials import ProviderKeyError, register_secret
 from amp.agents.llm.base import SHARED, TRANSIENT_ATTEMPTS_ENV
 from amp.agents.models import DEGENERATE_RESAMPLES, FALLBACK_SOURCE, MAX_EFFORT
-from amp.contracts.model import AgentProfile, LLMClient, RuntimeEnv
+from amp.contracts.model import THINKING_BUDGET_KEY, AgentProfile, LLMClient, RuntimeEnv
 
 SECRET_HEADER = ("authorization", "key", "token", "secret", "cookie")
 
@@ -57,6 +57,8 @@ def build_llm(profile: AgentProfile, runtime: RuntimeEnv | None = None, *,
 
         if reasoning is not None:
             kw["thinking"] = reasoning
+        if profile.extra.get(THINKING_BUDGET_KEY) is not None:     # amp-split patch
+            kw["thinking_budget"] = int(profile.extra[THINKING_BUDGET_KEY])
         llm = OpenAIChatClient(r.served_model, base_url=r.base_url,
                                context_tokens=r.context_tokens, price=price,
                                max_effort=MAX_EFFORT.get(m.model_id),

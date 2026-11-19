@@ -13,6 +13,9 @@ from typing import Any, Protocol
 PROVIDERS = ("anthropic", "gemini", "openai-chat")
 REASONING_KINDS = ("effort", "thinking", "none")
 VISIONS = ("image", "vdm_strict", "vdm")
+# amp-split patch: the AgentProfile.extra key of the coder's reasoning budget in tokens per reply
+# (amp eval robolab --thinking-budget), enforced by the openai-chat client (ThinkingCut).
+THINKING_BUDGET_KEY = "thinking_budget"
 
 CONTEXT_WINDOWS: dict[str, int] = {
     "claude-opus-5-5": 1_000_000,
