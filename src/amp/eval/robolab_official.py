@@ -44,7 +44,8 @@ from amp.contracts.eval import (
     is_retryable,
     unit_name,
 )
-from amp.contracts.model import THINKING_BUDGET_KEY
+from amp.agents.context import PROMPT_BUDGET_FRACTION
+from amp.contracts.model import THINKING_BUDGET_KEY, TRIM_FLOOR_KEY
 from amp.contracts.trace import NullTracer
 
 from . import envs, gpus, robolab_merge, vision
@@ -813,6 +814,13 @@ def parser() -> argparse.ArgumentParser:
                          "after a wrap-up sentence; stated in the vdm prompt section; default none. "
                          "Recorded in the profile's extra, not in the arm id, so a budget run needs "
                          "its own --output (amp-split patch)")
+    ap.add_argument("--trim-floor", type=float, default=None, metavar="FRACTION",
+                    help="when the coder's history must be trimmed (over 0.7 of its context "
+                         "window), cut it to this fraction of the window in one step, so later "
+                         "turns reuse the server's prefix cache; above 0 and below 0.7; default "
+                         "none (trim to 0.7 every turn, the paper's). Recorded in the profile's "
+                         "extra, not in the arm id, so a floor run needs its own --output "
+                         "(amp-split patch)")
     return ap
 
 
@@ -834,9 +842,25 @@ def thinking_extra(budget: int | None) -> dict | None:
     return {THINKING_BUDGET_KEY: int(budget)}
 
 
+def trim_extra(floor: float | None) -> dict:
+    """The profile extra for --trim-floor (amp-split patch); ValueError outside (0, 0.7)."""
+    if floor is None:
+        return {}
+    if not 0 < float(floor) < PROMPT_BUDGET_FRACTION:
+        raise ValueError(f"--trim-floor must be above 0 and below {PROMPT_BUDGET_FRACTION}, "
+                         f"not {floor}")
+    return {TRIM_FLOOR_KEY: float(floor)}
+
+
+def profile_extra(a: argparse.Namespace) -> dict | None:
+    """--thinking-budget and --trim-floor as one profile extra; None when neither is set."""
+    extra = {**(thinking_extra(getattr(a, "thinking_budget", None)) or {}),
+             **trim_extra(getattr(a, "trim_floor", None))}
+    return extra or None
+
+
 def build_study(a: argparse.Namespace, tasks: Sequence[str], est: dict[str, float]) -> Study:
-    agent = make_profile(a.model, a.reasoning, a.prompt,
-                         thinking_extra(getattr(a, "thinking_budget", None)),
+    agent = make_profile(a.model, a.reasoning, a.prompt, profile_extra(a),
                          **vision.profile_kwargs(a),
                          max_turns=getattr(a, "max_turns", None), wall_s=getattr(a, "wall_s", None))
     arms = tuple(Arm(h.strip(), agent) for h in a.harness.split(",") if h.strip())

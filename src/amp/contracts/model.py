@@ -16,6 +16,9 @@ VISIONS = ("image", "vdm_strict", "vdm")
 # amp-split patch: the AgentProfile.extra key of the coder's reasoning budget in tokens per reply
 # (amp eval robolab --thinking-budget), enforced by the openai-chat client (ThinkingCut).
 THINKING_BUDGET_KEY = "thinking_budget"
+# amp-split patch: the AgentProfile.extra key of the history-trim floor, a fraction of the coder's
+# context window (amp eval robolab --trim-floor), passed to the text loop's ContextWindow.
+TRIM_FLOOR_KEY = "trim_floor"
 
 CONTEXT_WINDOWS: dict[str, int] = {
     "claude-opus-5-5": 1_000_000,

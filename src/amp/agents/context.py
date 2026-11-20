@@ -81,8 +81,16 @@ class ContextWindow:
     """The images in the history (oldest first) and, given context_tokens, the token budget."""
 
     def __init__(self, context_tokens: int | None = None, image_cost=None,
-                 max_images: int = MAX_IMAGES, max_image_b64: int = MAX_IMAGE_B64):
+                 max_images: int = MAX_IMAGES, max_image_b64: int = MAX_IMAGE_B64,
+                 trim_floor: float | None = None):
         self.context_tokens = context_tokens
+        # amp-split patch: once fit has to elide, it cuts to trim_floor x the window instead of
+        # to the budget, so the history is append-only again for many turns (vLLM's prefix cache
+        # hits) rather than edited on almost every turn. None: the budget, as before.
+        if trim_floor is not None and not 0 < float(trim_floor) < PROMPT_BUDGET_FRACTION:
+            raise ValueError(f"trim_floor must be above 0 and below {PROMPT_BUDGET_FRACTION}, "
+                             f"not {trim_floor}")
+        self.trim_floor = None if trim_floor is None else float(trim_floor)
         self.image_cost = image_cost
         self.max_images, self.max_image_b64 = max_images, max_image_b64
         self.budget_fraction = PROMPT_BUDGET_FRACTION
@@ -186,7 +194,9 @@ class ContextWindow:
     def fit(self, system: list[dict], tools: list[dict], messages: list[dict]) -> dict | None:
         """Elide old context, stage by stage and oldest first, until the request fits
         budget_fraction of the window; the first user message and the newest KEEP_NEWEST messages
-        are never touched."""
+        are never touched. With trim_floor (amp-split patch) a fit that has to elide goes on to
+        trim_floor x the window (never above the budget) within the stages it uses, but opens no
+        further stage once the request fits the budget."""
         if not self.context_tokens:
             return None
         budget = self.budget_fraction * self.context_tokens
@@ -194,6 +204,8 @@ class ContextWindow:
         before = total = self.estimate(system, tools, messages) * ratio
         if total <= budget:
             return None
+        target = budget if self.trim_floor is None else \
+            min(budget, self.trim_floor * self.context_tokens)
         old = messages[1:max(1, len(messages) - KEEP_NEWEST)]
 
         def blocks(role):
@@ -263,7 +275,7 @@ class ContextWindow:
         counts = dict.fromkeys(STAGES, 0)
         dropped: set[int] = set()
         for name in STAGES:
-            if total <= budget:
+            if total <= budget:     # amp-split patch: the floor deepens a stage, never adds one
                 break
             for cont, i, repl in stages[name]():
                 gain = (self.block_tokens(cont[i]) - self.block_tokens(repl)) * ratio
@@ -273,7 +285,7 @@ class ContextWindow:
                 cont[i] = repl
                 total -= gain
                 counts[name] += 1
-                if total <= budget:
+                if total <= target:
                     break
         if dropped:
             self.images = [x for x in self.images if id(x[1]) not in dropped]
@@ -282,5 +294,6 @@ class ContextWindow:
         after = self.estimate(system, tools, messages) * ratio
         return {**counts, "tokens_before": round(before), "tokens_after": round(after),
                 "budget_tokens": round(budget), "fraction": round(self.budget_fraction, 4),
+                "target_tokens": round(target), "trim_floor": self.trim_floor,
                 "token_ratio": round(ratio, 3), "context_tokens": self.context_tokens,
                 "fits": after <= budget}

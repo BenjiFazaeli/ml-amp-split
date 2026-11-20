@@ -116,7 +116,8 @@ class Agent:
                  max_turns: int = 300, wall_s: float = 7200, max_cost_usd: float = 80.0,
                  meta: dict | None = None,
                  cameras: tuple[str, ...] = CAMERAS, judged_by_self: bool = False,
-                 official=None, vdm_llm=None, vision: str | None = None):
+                 official=None, vdm_llm=None, vision: str | None = None,
+                 trim_floor: float | None = None):
         self.dir = Path(episode_dir).resolve()
         self.info = json.loads((self.dir / "episode.json").read_text())
         self.llm, self.kernel_factory, self.ep = llm, kernel_factory, episode
@@ -134,7 +135,8 @@ class Agent:
         self.robot_cameras: tuple[str, ...] | None = None
         self.provider = llm.provider
         self.ctx = ContextWindow(getattr(llm, "context_tokens", None),
-                                 getattr(llm, "estimate_image_tokens", None))
+                                 getattr(llm, "estimate_image_tokens", None),
+                                 trim_floor=trim_floor)     # amp-split patch: --trim-floor
         self.context_window: int | None = getattr(llm, "context_window", None)
         self.limits = {"max_turns": max_turns, "wall_s": wall_s, "max_cost_usd": max_cost_usd}
         self.kernel = None
