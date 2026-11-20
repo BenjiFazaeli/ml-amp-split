@@ -55,7 +55,13 @@ def episode_over_text(end, obs: dict, benchmark: bool = False, judged_by_self: b
             steps_left=obs.get("steps_left"), mode=obs.get("mode"))
     return msg + (VDM_NOTES["over_tail"] if vdm else EPISODE_OVER["tail"])
 
-VDM_SURFACE_VERSION = 4     # 4: the reasoning-budget bullet (amp-split patch 0010)
+VDM_SURFACE_VERSION = 5     # 4: the reasoning-budget bullet (amp-split patch 0010); 5: kept notes
+
+
+def vdm_surface_version(keep_tags: bool = False) -> int:
+    """The version an episode records: 5 only with --keep-tags (amp-split patch), whose bullet is
+    version 5's one change. Without it the coder's surface is version 4's, and says so."""
+    return VDM_SURFACE_VERSION if keep_tags else 4
 
 VDM_NOTES = {
     "diff": "[vision model] What changed between step {before} and step {after}, seen by {seen}:"
@@ -244,12 +250,28 @@ VDM_BUDGET_TEXT = (
     "perception data, `ep.check` and `ep.preview`, and think only to decide the next call.\n")
 
 
-def vision_section(prompt: str, vision: str, thinking_budget: int | None = None) -> str:
+# amp-split patch: the last bullet of the vdm section when the harness keeps the coder's marked
+# lines as it elides old reasoning (--keep-tags; agents/context.py, KEEP_RE). Wording approved by
+# the owner, 2026-11-20. The same text all episode: the system prompt heads every cached prefix.
+VDM_KEEP_TEXT = (
+    "- Your older reasoning is removed from this conversation when it grows long; lines you mark "
+    "are kept in its place. Mark what you would need without it, one note per line, early in "
+    "your reply: `<keep kind=\"fact\">mug handle points +y (ep.objects(), step 120)</keep>`. "
+    "Kinds: `fact` (verified, and how), `fail` (an approach that failed, and why), `scene` (what "
+    "the vision model said an object is, with its id), `plan` (a subgoal and its status), `done` "
+    "(a subgoal finished). A few notes per reply at most; most replies need none.\n")
+
+
+def vision_section(prompt: str, vision: str, thinking_budget: int | None = None,
+                   keep_tags: bool = False) -> str:
     """The section a vision harness configuration's system text ends with: none for image ones.
-    For vdm with a reasoning budget it ends with VDM_BUDGET_TEXT (amp-split patch)."""
+    For vdm with a reasoning budget it ends with VDM_BUDGET_TEXT, and with keep_tags then with
+    VDM_KEEP_TEXT (amp-split patches)."""
     if vision == "image":
         return ""
     section = VISION_SECTIONS[vision]
     if vision == "vdm" and thinking_budget:
         section += VDM_BUDGET_TEXT.format(n=int(thinking_budget))
+    if vision == "vdm" and keep_tags:
+        section += VDM_KEEP_TEXT
     return section

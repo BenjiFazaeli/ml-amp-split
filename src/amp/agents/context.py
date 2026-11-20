@@ -63,6 +63,35 @@ RESULT_ELIDED_BY_VISION = {
     "vdm_strict": ("[tool result elided to fit the context window; re-run its code to print it "
                    "again]"),
 }
+# amp-split patch: --keep-tags. The coder marks lines worth keeping, <keep kind="fact">...</keep>
+# (agents_text/surface.py, VDM_KEEP_TEXT); eliding its reasoning keeps those lines in place of
+# the block, so the cut stays a pure function of the history and makes no model call.
+KEEP_KINDS = ("fact", "fail", "scene", "plan", "done")
+KEEP_RE = re.compile(r"<keep\s+kind\s*=\s*[\"']?(" + "|".join(KEEP_KINDS) + r")[\"']?\s*>"
+                     r"((?:(?!<keep\b|</keep>).)+?)</keep>", re.DOTALL)
+KEEP_CHARS = 400            # per note, after its whitespace is collapsed
+KEEP_CAP = 8000             # tokens of kept reasoning notes in the whole history
+KEEP_DROP = (("plan", "scene"), ("done",), ("fact",))   # over the cap, oldest first; never fail
+KEPT_HEAD = "[earlier reasoning elided; kept notes:]"
+KEPT_TEXT_HEAD = "[kept notes from the elided part:]"
+
+
+def keep_notes(text: str) -> list[tuple[str, str]]:
+    """The (kind, note) pairs a text marks with <keep kind="...">note</keep>, in order: a known
+    kind, any quotes, the note's whitespace collapsed to single spaces and cut at KEEP_CHARS; an
+    unknown kind, an empty note or an unclosed tag is not a note, and of nested tags only the
+    innermost is."""
+    out = []
+    for m in KEEP_RE.finditer(text or ""):
+        note = " ".join(m.group(2).split())
+        if note:
+            out.append((m.group(1), note if len(note) <= KEEP_CHARS
+                        else note[:KEEP_CHARS - 3] + "..."))
+    return out
+
+
+def kept_block(notes: list[tuple[str, str]], head: str = KEPT_HEAD) -> str:
+    return head + "".join(f'\n<keep kind="{k}">{n}</keep>' for k, n in notes)
 
 
 def _text(text: str) -> dict:
@@ -235,7 +264,7 @@ class ContextWindow:
     def __init__(self, context_tokens: int | None = None, image_cost=None,
                  max_images: int = MAX_IMAGES, max_image_b64: int = MAX_IMAGE_B64,
                  trim_floor: float | None = None, select: str | None = None,
-                 vision: str | None = None):
+                 vision: str | None = None, keep_tags: bool = False):
         self.context_tokens = context_tokens
         # amp-split patch: once fit has to elide, it cuts to trim_floor x the window instead of
         # to the budget, so the history is append-only again for many turns (vLLM's prefix cache
@@ -251,6 +280,11 @@ class ContextWindow:
         if select is not None and self.trim_floor is None:
             raise ValueError("select needs trim_floor: it chooses what a cut to the floor takes")
         self.select = select
+        # amp-split patch: keep_tags keeps the coder's <keep> lines when its reasoning is elided
+        if keep_tags and self.trim_floor is None:
+            raise ValueError("keep_tags needs trim_floor: the notes are kept at a cut to the floor")
+        self.keep_tags = bool(keep_tags)
+        self.keep_cap = KEEP_CAP
         self.result_elided = RESULT_ELIDED_BY_VISION.get(vision or "image", RESULT_ELIDED) \
             if select else RESULT_ELIDED
         self.image_cost = image_cost
@@ -360,7 +394,8 @@ class ContextWindow:
         trim_floor x the window (never above the budget) within the stages it uses, but opens no
         further stage once the request fits the budget. With select "outcome" (amp-split patch)
         that cut first collapses fixed errors and superseded state printouts, then reasoning,
-        and never touches the newest clock and object printouts (pins)."""
+        and never touches the newest clock and object printouts (pins). With keep_tags
+        (amp-split patch) elided reasoning keeps the coder's <keep> lines, within keep_cap."""
         if not self.context_tokens:
             return None
         budget = self.budget_fraction * self.context_tokens
@@ -405,8 +440,9 @@ class ContextWindow:
                     continue
                 edits = []
                 for i, b in enumerate(c["content"]):
-                    if b.get("type") == "thinking" and b.get("thinking") != REASONING_ELIDED:
-                        edits.append((c["content"], i, {**b, "thinking": REASONING_ELIDED}))
+                    gone = self.elided(b.get("thinking") or "")
+                    if b.get("type") == "thinking" and b.get("thinking") != gone:
+                        edits.append((c["content"], i, {**b, "thinking": gone}))
                     elif b is c["use"]:
                         edits.append((c["content"], i, {**b, "input": {"code": FAILED_CODE}}))
                 rc = r["content"]
@@ -435,7 +471,7 @@ class ContextWindow:
             for cont in blocks("assistant"):
                 for i, b in enumerate(cont):
                     if b.get("type") == "thinking":
-                        yield cont, i, {**b, "thinking": REASONING_ELIDED}
+                        yield cont, i, {**b, "thinking": self.elided(b.get("thinking") or "")}
 
         def tool_text():
             for _, _, r in results():
@@ -458,7 +494,7 @@ class ContextWindow:
                 for i, b in enumerate(cont):
                     t = b.get("text") or ""
                     if b.get("type") == "text" and len(t) > LONG_TEXT:
-                        yield cont, i, {**b, "text": shorten(t, KEEP_TEXT)}
+                        yield cont, i, {**b, "text": self.shortened(t)}
 
         def images():
             for top in blocks("user"):
@@ -510,6 +546,7 @@ class ContextWindow:
                 freed[name] += gain
                 if total <= target:
                     break
+        capped = self.cap_notes(old) if self.keep_tags else 0
         if dropped:
             self.images = [x for x in self.images if id(x[1]) not in dropped]
             for k in dropped:
@@ -523,7 +560,62 @@ class ContextWindow:
         if self.select:
             out.update(select=self.select, pinned=len(pins),
                        freed_tokens={k: round(v) for k, v in freed.items() if v})
+        if self.keep_tags:
+            kept = [k for _, _, notes in self.kept(old) for k, _ in notes]
+            out.update(keep_tags=True, notes_dropped=capped,
+                       kept_notes={k: kept.count(k) for k in KEEP_KINDS if k in kept})
         return out
+
+    def elided(self, reasoning: str) -> str:
+        """What an elided reasoning block becomes: REASONING_ELIDED, or with keep_tags (amp-split
+        patch) its notes under KEPT_HEAD when it has any (a kept block keeps its own)."""
+        notes = keep_notes(reasoning) if self.keep_tags else []
+        return kept_block(notes) if notes else REASONING_ELIDED
+
+    def shortened(self, text: str) -> str:
+        """shorten(text, KEEP_TEXT); with keep_tags the notes of its elided middle follow it."""
+        short = shorten(text, KEEP_TEXT)
+        if not self.keep_tags:
+            return short
+        lost = keep_notes(text)
+        for n in keep_notes(short):
+            if n in lost:
+                lost.remove(n)
+        return short + "\n" + kept_block(lost, KEPT_TEXT_HEAD) if lost else short
+
+    @staticmethod
+    def kept(old: list[dict]) -> list[tuple[list, int, list]]:
+        """(content, index, notes) of every kept-notes reasoning block in old, oldest first."""
+        out = []
+        for m in old:
+            if m.get("role") != "assistant" or not isinstance(m.get("content"), list):
+                continue
+            for i, b in enumerate(m["content"]):
+                if b.get("type") == "thinking" and (b.get("thinking") or "").startswith(KEPT_HEAD):
+                    out.append((m["content"], i, keep_notes(b["thinking"])))
+        return out
+
+    def cap_notes(self, old: list[dict]) -> int:
+        """Hold the kept reasoning notes to keep_cap tokens: drop the oldest plan and scene notes
+        first, then done, then fact, never fail; how many went. Runs only at a cut."""
+        blocks = self.kept(old)
+        size = sum(len(f'\n<keep kind="{k}">{n}</keep>') for _, _, ns in blocks for k, n in ns)
+        cap = self.keep_cap * CHARS_PER_TOKEN
+        gone = 0
+        for kinds in KEEP_DROP:
+            for _, _, notes in blocks:
+                for note in [x for x in notes if x[0] in kinds]:
+                    if size <= cap:
+                        break
+                    notes.remove(note)
+                    size -= len(f'\n<keep kind="{note[0]}">{note[1]}</keep>')
+                    gone += 1
+        if gone:
+            for cont, i, notes in blocks:
+                text = kept_block(notes) if notes else REASONING_ELIDED
+                if cont[i].get("thinking") != text:
+                    cont[i] = {**cont[i], "thinking": text}
+        return gone
 
     @staticmethod
     def pins(calls: list[dict]) -> set[int]:

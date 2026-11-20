@@ -45,7 +45,8 @@ from amp.contracts.eval import (
     unit_name,
 )
 from amp.agents.context import PROMPT_BUDGET_FRACTION, SELECTS
-from amp.contracts.model import THINKING_BUDGET_KEY, TRIM_FLOOR_KEY, TRIM_SELECT_KEY
+from amp.contracts.model import (KEEP_TAGS_KEY, THINKING_BUDGET_KEY, TRIM_FLOOR_KEY,
+                                 TRIM_SELECT_KEY)
 from amp.contracts.trace import NullTracer
 
 from . import envs, gpus, robolab_merge, vision
@@ -829,6 +830,12 @@ def parser() -> argparse.ArgumentParser:
                          "Needs --trim-floor; default none (the stage order alone). Recorded in "
                          "the profile's extra, so a selection run needs its own --output "
                          "(amp-split patch)")
+    ap.add_argument("--keep-tags", action="store_true",
+                    help="vision vdm: the coder's prompt asks it to mark lines worth keeping "
+                         "(<keep kind=...>), and the --trim-floor cut keeps those lines where it "
+                         "elides reasoning. Needs --trim-floor and --vision vdm; changes the "
+                         "prompt of every episode. Recorded in the profile's extra, so such a "
+                         "run needs its own --output (amp-split patch)")
     return ap
 
 
@@ -871,12 +878,25 @@ def select_extra(select: str | None, floor: float | None) -> dict:
     return {TRIM_SELECT_KEY: select}
 
 
+def keep_extra(keep: bool, floor: float | None, vision_mode: str | None) -> dict:
+    """The profile extra for --keep-tags (amp-split patch); ValueError without --trim-floor or
+    outside --vision vdm, whose prompt section carries the request."""
+    if not keep:
+        return {}
+    if floor is None:
+        raise ValueError("--keep-tags needs --trim-floor: the notes are kept at that cut")
+    if vision_mode != "vdm":
+        raise ValueError(f"--keep-tags needs --vision vdm, not {vision_mode}")
+    return {KEEP_TAGS_KEY: True}
+
+
 def profile_extra(a: argparse.Namespace) -> dict | None:
-    """--thinking-budget, --trim-floor and --trim-select as one profile extra; None when none
-    is set."""
+    """--thinking-budget, --trim-floor, --trim-select and --keep-tags as one profile extra; None
+    when none is set."""
     floor = getattr(a, "trim_floor", None)
     extra = {**(thinking_extra(getattr(a, "thinking_budget", None)) or {}),
-             **trim_extra(floor), **select_extra(getattr(a, "trim_select", None), floor)}
+             **trim_extra(floor), **select_extra(getattr(a, "trim_select", None), floor),
+             **keep_extra(getattr(a, "keep_tags", False), floor, getattr(a, "vision", None))}
     return extra or None
 
 

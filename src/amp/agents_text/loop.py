@@ -37,9 +37,9 @@ from amp.agents_text.surface import (
     AGENT_SURFACE_VERSION,
     VDM_NOTES,
     VDM_PROMPTS,
-    VDM_SURFACE_VERSION,
     episode_over_text,
     saved_images_text,
+    vdm_surface_version,
 )
 from amp.contracts.embodiment import DROID
 from amp.contracts.trace import NullTracer
@@ -117,7 +117,8 @@ class Agent:
                  meta: dict | None = None,
                  cameras: tuple[str, ...] = CAMERAS, judged_by_self: bool = False,
                  official=None, vdm_llm=None, vision: str | None = None,
-                 trim_floor: float | None = None, trim_select: str | None = None):
+                 trim_floor: float | None = None, trim_select: str | None = None,
+                 keep_tags: bool = False):
         self.dir = Path(episode_dir).resolve()
         self.info = json.loads((self.dir / "episode.json").read_text())
         self.llm, self.kernel_factory, self.ep = llm, kernel_factory, episode
@@ -137,7 +138,8 @@ class Agent:
         self.ctx = ContextWindow(getattr(llm, "context_tokens", None),
                                  getattr(llm, "estimate_image_tokens", None),
                                  trim_floor=trim_floor,     # amp-split patch: --trim-floor
-                                 select=trim_select, vision=self.vision)   # and --trim-select
+                                 select=trim_select, vision=self.vision,   # --trim-select
+                                 keep_tags=keep_tags)                       # and --keep-tags
         self.context_window: int | None = getattr(llm, "context_window", None)
         self.limits = {"max_turns": max_turns, "wall_s": wall_s, "max_cost_usd": max_cost_usd}
         self.kernel = None
@@ -179,7 +181,7 @@ class Agent:
         self.vdm_pending: list[str] = []
         if self.vdm is not None:
             self.totals.update(dict.fromkeys(VDM_TOTAL_KEYS, 0), vdm_cost_usd=0.0, vdm_s=0.0)
-            self.meta["vdm_surface_version"] = VDM_SURFACE_VERSION
+            self.meta["vdm_surface_version"] = vdm_surface_version(keep_tags)
             if hasattr(self.vdm, "observer"):
                 self.vdm.observer = _VdmObserver(self)
 

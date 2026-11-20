@@ -50,7 +50,8 @@ from amp.agents_text.surface import self_judged
 from amp.agents_text.tools import tools_for, tools_sha256
 from amp.contracts import CONTRACT_VERSION
 from amp.contracts.eval import AGENT_CONFIG_FILE, EPISODE_FILE, AgentRunConfig
-from amp.contracts.model import THINKING_BUDGET_KEY, TRIM_FLOOR_KEY, TRIM_SELECT_KEY
+from amp.contracts.model import (KEEP_TAGS_KEY, THINKING_BUDGET_KEY, TRIM_FLOOR_KEY,
+                                 TRIM_SELECT_KEY)
 from amp.trace import from_env
 from amp.trace.redact import DEFAULT
 
@@ -146,8 +147,9 @@ def run(ep_dir: Path, *, tracer=None, registry=None, kernel_cls=None, episode_cl
     info = json.loads((ep_dir / EPISODE_FILE).read_text())
     runtime = detect_runtime(environ)
     text = system_text(prof.prompt, registry.reference_text(spec))
+    keep_tags = bool(prof.extra.get(KEEP_TAGS_KEY))        # amp-split patch: --keep-tags
     section = surface.vision_section(prof.prompt, prof.vision,
-                                     prof.extra.get(THINKING_BUDGET_KEY))
+                                     prof.extra.get(THINKING_BUDGET_KEY), keep_tags)
     if section:
         text = compose_system(text, section)
     judged_by_self = self_judged(prof.prompt)
@@ -194,7 +196,7 @@ def run(ep_dir: Path, *, tracer=None, registry=None, kernel_cls=None, episode_cl
                   judged_by_self=judged_by_self,
                   official=Official(client, key) if key else None, vdm_llm=vdm,
                   vision=prof.vision, trim_floor=prof.extra.get(TRIM_FLOOR_KEY),
-                  trim_select=prof.extra.get(TRIM_SELECT_KEY))
+                  trim_select=prof.extra.get(TRIM_SELECT_KEY), keep_tags=keep_tags)
     try:
         agent.run()
     finally:

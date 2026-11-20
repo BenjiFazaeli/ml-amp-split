@@ -22,6 +22,9 @@ TRIM_FLOOR_KEY = "trim_floor"
 # amp-split patch: the AgentProfile.extra key of what a cut to that floor takes (amp eval robolab
 # --trim-select, context.SELECTS), passed to the text loop's ContextWindow.
 TRIM_SELECT_KEY = "trim_select"
+# amp-split patch: the AgentProfile.extra key of kept notes (amp eval robolab --keep-tags): the vdm
+# prompt asks for <keep> lines and the text loop's ContextWindow keeps them at the cut.
+KEEP_TAGS_KEY = "keep_tags"
 
 CONTEXT_WINDOWS: dict[str, int] = {
     "claude-opus-5-5": 1_000_000,
