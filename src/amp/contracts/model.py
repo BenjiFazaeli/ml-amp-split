@@ -19,6 +19,9 @@ THINKING_BUDGET_KEY = "thinking_budget"
 # amp-split patch: the AgentProfile.extra key of the history-trim floor, a fraction of the coder's
 # context window (amp eval robolab --trim-floor), passed to the text loop's ContextWindow.
 TRIM_FLOOR_KEY = "trim_floor"
+# amp-split patch: the AgentProfile.extra key of what a cut to that floor takes (amp eval robolab
+# --trim-select, context.SELECTS), passed to the text loop's ContextWindow.
+TRIM_SELECT_KEY = "trim_select"
 
 CONTEXT_WINDOWS: dict[str, int] = {
     "claude-opus-5-5": 1_000_000,

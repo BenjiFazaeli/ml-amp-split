@@ -50,7 +50,7 @@ from amp.agents_text.surface import self_judged
 from amp.agents_text.tools import tools_for, tools_sha256
 from amp.contracts import CONTRACT_VERSION
 from amp.contracts.eval import AGENT_CONFIG_FILE, EPISODE_FILE, AgentRunConfig
-from amp.contracts.model import THINKING_BUDGET_KEY, TRIM_FLOOR_KEY
+from amp.contracts.model import THINKING_BUDGET_KEY, TRIM_FLOOR_KEY, TRIM_SELECT_KEY
 from amp.trace import from_env
 from amp.trace.redact import DEFAULT
 
@@ -193,7 +193,8 @@ def run(ep_dir: Path, *, tracer=None, registry=None, kernel_cls=None, episode_cl
                   wall_s=prof.wall_s, max_cost_usd=prof.max_cost_usd, meta=meta,
                   judged_by_self=judged_by_self,
                   official=Official(client, key) if key else None, vdm_llm=vdm,
-                  vision=prof.vision, trim_floor=prof.extra.get(TRIM_FLOOR_KEY))
+                  vision=prof.vision, trim_floor=prof.extra.get(TRIM_FLOOR_KEY),
+                  trim_select=prof.extra.get(TRIM_SELECT_KEY))
     try:
         agent.run()
     finally:

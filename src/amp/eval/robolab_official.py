@@ -44,8 +44,8 @@ from amp.contracts.eval import (
     is_retryable,
     unit_name,
 )
-from amp.agents.context import PROMPT_BUDGET_FRACTION
-from amp.contracts.model import THINKING_BUDGET_KEY, TRIM_FLOOR_KEY
+from amp.agents.context import PROMPT_BUDGET_FRACTION, SELECTS
+from amp.contracts.model import THINKING_BUDGET_KEY, TRIM_FLOOR_KEY, TRIM_SELECT_KEY
 from amp.contracts.trace import NullTracer
 
 from . import envs, gpus, robolab_merge, vision
@@ -821,6 +821,14 @@ def parser() -> argparse.ArgumentParser:
                          "none (trim to 0.7 every turn, the paper's). Recorded in the profile's "
                          "extra, not in the arm id, so a floor run needs its own --output "
                          "(amp-split patch)")
+    ap.add_argument("--trim-select", choices=SELECTS, default=None,
+                    help="what the --trim-floor cut takes first: outcome collapses python calls "
+                         "that failed and were fixed within 3 turns into one line each, and "
+                         "drops state printouts the same code printed again later, before old "
+                         "reasoning; it never elides the newest clock and object printouts. "
+                         "Needs --trim-floor; default none (the stage order alone). Recorded in "
+                         "the profile's extra, so a selection run needs its own --output "
+                         "(amp-split patch)")
     return ap
 
 
@@ -852,10 +860,23 @@ def trim_extra(floor: float | None) -> dict:
     return {TRIM_FLOOR_KEY: float(floor)}
 
 
+def select_extra(select: str | None, floor: float | None) -> dict:
+    """The profile extra for --trim-select (amp-split patch); ValueError without --trim-floor."""
+    if select is None:
+        return {}
+    if select not in SELECTS:
+        raise ValueError(f"--trim-select must be one of {', '.join(SELECTS)}, not {select!r}")
+    if floor is None:
+        raise ValueError("--trim-select needs --trim-floor: it chooses what that cut takes")
+    return {TRIM_SELECT_KEY: select}
+
+
 def profile_extra(a: argparse.Namespace) -> dict | None:
-    """--thinking-budget and --trim-floor as one profile extra; None when neither is set."""
+    """--thinking-budget, --trim-floor and --trim-select as one profile extra; None when none
+    is set."""
+    floor = getattr(a, "trim_floor", None)
     extra = {**(thinking_extra(getattr(a, "thinking_budget", None)) or {}),
-             **trim_extra(getattr(a, "trim_floor", None))}
+             **trim_extra(floor), **select_extra(getattr(a, "trim_select", None), floor)}
     return extra or None
 
 
