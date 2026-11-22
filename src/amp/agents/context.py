@@ -94,6 +94,20 @@ def kept_block(notes: list[tuple[str, str]], head: str = KEPT_HEAD) -> str:
     return head + "".join(f'\n<keep kind="{k}">{n}</keep>' for k, n in notes)
 
 
+def keep_tag_line(kind, note) -> str:
+    """The line the kernel's keep_tags(kind, note) prints into its result (amp-split patch 0017):
+    one <keep> tag, the note on one line and cut at KEEP_CHARS. ValueError for a kind not in
+    KEEP_KINDS or an empty note, so the coder reads the allowed kinds in the traceback."""
+    if kind not in KEEP_KINDS:
+        raise ValueError(f"kind must be one of {', '.join(KEEP_KINDS)}, not {kind!r}")
+    text = " ".join(str(note).split())
+    if not text:
+        raise ValueError("note must say something")
+    if len(text) > KEEP_CHARS:
+        text = text[:KEEP_CHARS - 3] + "..."
+    return f'<keep kind="{kind}">{text}</keep>'
+
+
 def _text(text: str) -> dict:
     return {"type": "text", "text": text}
 
@@ -451,7 +465,8 @@ class ContextWindow:
                 note = failed_note(exception_line(head), fix["turn"] - c["turn"])
                 rest = rc[1:] if text_first else rc
                 edits.append((c["reply"], c["index"],
-                              {**r, "content": [_text(note + footer(head)), *rest]}))
+                              {**r, "content": [_text(note + self.result_notes(head)
+                                                      + footer(head)), *rest]}))
                 yield edits
 
         def superseded():
@@ -464,7 +479,8 @@ class ContextWindow:
                        for d in calls[n + 1:]):          # the same code, run again later
                     q = ", ".join(f"ep.{x}()" for x in STATE_QUERIES if x in c["query"][0])
                     texts = [b.get("text") or "" for b in r["content"] if b.get("type") == "text"]
-                    note = SUPERSEDED_NOTE.format(q=q) + footer(texts[-1] if texts else "")
+                    note = SUPERSEDED_NOTE.format(q=q) + self.result_notes("\n".join(texts)) \
+                        + footer(texts[-1] if texts else "")
                     yield [(c["reply"], c["index"], {**r, "content": [_text(note)]})]
 
         def thinking():
@@ -478,7 +494,7 @@ class ContextWindow:
                 for i, b in enumerate(r["content"]):
                     t = b.get("text") or ""
                     if b.get("type") == "text" and len(t) > LONG_TEXT:
-                        yield r["content"], i, {**b, "text": shorten(t, KEEP_TEXT)}
+                        yield r["content"], i, {**b, "text": self.shortened(t)}
 
         def tool_input():
             for cont in blocks("assistant"):
@@ -510,7 +526,8 @@ class ContextWindow:
 
         def whole_results():
             for cont, i, r in results():
-                yield cont, i, {**r, "content": [{"type": "text", "text": self.result_elided}]}
+                texts = "\n".join(b.get("text") or "" for b in r["content"] if b.get("type") == "text")
+                yield cont, i, {**r, "content": [_text(self.result_elided + self.result_notes(texts))]}
 
         def image_ids(b):
             if b.get("type") == "image":
@@ -572,8 +589,15 @@ class ContextWindow:
         notes = keep_notes(reasoning) if self.keep_tags else []
         return kept_block(notes) if notes else REASONING_ELIDED
 
+    def result_notes(self, text: str) -> str:
+        """With keep_tags (amp-split patch 0017), the <keep> lines the kernel's keep_tags() printed
+        into a tool result that is being replaced: a kept block to append to its replacement, or ""."""
+        notes = keep_notes(text) if self.keep_tags else []
+        return "\n" + kept_block(notes, KEPT_TEXT_HEAD) if notes else ""
+
     def shortened(self, text: str) -> str:
-        """shorten(text, KEEP_TEXT); with keep_tags the notes of its elided middle follow it."""
+        """shorten(text, KEEP_TEXT); with keep_tags the notes of its elided middle follow it (an
+        assistant text's own tags, or the lines keep_tags() printed into a tool result)."""
         short = shorten(text, KEEP_TEXT)
         if not self.keep_tags:
             return short

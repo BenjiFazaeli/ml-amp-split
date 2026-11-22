@@ -55,12 +55,13 @@ def episode_over_text(end, obs: dict, benchmark: bool = False, judged_by_self: b
             steps_left=obs.get("steps_left"), mode=obs.get("mode"))
     return msg + (VDM_NOTES["over_tail"] if vdm else EPISODE_OVER["tail"])
 
-VDM_SURFACE_VERSION = 5     # 4: the reasoning-budget bullet (amp-split patch 0010); 5: kept notes
+VDM_SURFACE_VERSION = 5     # 4: the reasoning-budget bullet (amp-split patch 0010); 5: keep_tags
 
 
 def vdm_surface_version(keep_tags: bool = False) -> int:
-    """The version an episode records: 5 only with --keep-tags (amp-split patch), whose bullet is
-    version 5's one change. Without it the coder's surface is version 4's, and says so."""
+    """The version an episode records: 5 only with --keep-tags (amp-split patch 0017: the
+    keep_tags() block in the tools section and the kernel function; 0015's inline-tag bullet,
+    also 5, ran only in episode K). Without it the coder's surface is version 4's, and says so."""
     return VDM_SURFACE_VERSION if keep_tags else 4
 
 VDM_NOTES = {
@@ -250,28 +251,53 @@ VDM_BUDGET_TEXT = (
     "perception data, `ep.check` and `ep.preview`, and think only to decide the next call.\n")
 
 
-# amp-split patch: the last bullet of the vdm section when the harness keeps the coder's marked
-# lines as it elides old reasoning (--keep-tags; agents/context.py, KEEP_RE). Wording approved by
-# the owner, 2026-11-20. The same text all episode: the system prompt heads every cached prefix.
-VDM_KEEP_TEXT = (
-    "- Your older reasoning is removed from this conversation when it grows long; lines you mark "
-    "are kept in its place. Mark what you would need without it, one note per line, early in "
-    "your reply: `<keep kind=\"fact\">mug handle points +y (ep.objects(), step 120)</keep>`. "
-    "Kinds: `fact` (verified, and how), `fail` (an approach that failed, and why), `scene` (what "
-    "the vision model said an object is, with its id), `plan` (a subgoal and its status), `done` "
-    "(a subgoal finished). A few notes per reply at most; most replies need none.\n")
+# amp-split patch 0017 (--keep-tags): the kernel's keep_tags(kind, note) keeps one line past the
+# removal of old reasoning. Its explanation goes into the prompt's tools section, right after the
+# paragraph on what every tool result carries (KEEP_TAGS_ANCHOR), not into the vision section:
+# the coder reads the tools section for how its code's results work. 0015's inline <keep> tags
+# in replies, as a bullet at the end of the vdm section, were never used (episodes K: 0 notes in
+# 170 replies). The same text all episode: the system prompt heads every cached prefix.
+KEEP_TAGS_ANCHOR = "Read it before you plan the next move.\n"
+KEEP_TAGS_TEXT = (
+    "\n"
+    "**Your older reasoning is removed from this conversation when it grows long.** What you "
+    "keep with `keep_tags(kind, note)` (inside `python`) stays: the line is printed into the "
+    "tool result, which is kept where the reasoning was. After a call that verified a fact, "
+    "failed, or finished a subgoal, keep one line about it in your next cell, with its "
+    "evidence:\n"
+    "- `keep_tags(\"fact\", \"mug handle points +y (ep.objects() at step 120)\")`: something "
+    "verified, and how.\n"
+    "- `keep_tags(\"fail\", \"grasp from above slips off the mug rim (steps 140-180); approach "
+    "from the side\")`: an approach that failed, and why.\n"
+    "- `keep_tags(\"scene\", \"obj6 is the red mug, on its side (vision model, step 7)\")`: what "
+    "the vision model said an object is, with its id.\n"
+    "- `keep_tags(\"plan\", \"1 mug upright: done; 2 move to the plate: next\")`: a subgoal and "
+    "its status.\n"
+    "- `keep_tags(\"done\", \"red mug upright at step 210, ep.check passed\")`: a subgoal "
+    "finished.\n"
+    "One line each (400 characters at most), a few per episode; a note you never need later "
+    "costs nothing.\n")
 
 
-def vision_section(prompt: str, vision: str, thinking_budget: int | None = None,
-                   keep_tags: bool = False) -> str:
+def keep_tags_prompt(text: str) -> str:
+    """The system text with KEEP_TAGS_TEXT inserted after KEEP_TAGS_ANCHOR (amp-split patch
+    0017); unchanged when it already holds the block. ValueError when the anchor is missing: the
+    condition must not run on a prompt it cannot explain itself in."""
+    if KEEP_TAGS_TEXT in text:
+        return text
+    head, sep, tail = text.partition(KEEP_TAGS_ANCHOR)
+    if not sep:
+        raise ValueError("the system text has no tool-result paragraph to put keep_tags after "
+                         f"({KEEP_TAGS_ANCHOR.strip()!r})")
+    return head + sep + KEEP_TAGS_TEXT + tail
+
+
+def vision_section(prompt: str, vision: str, thinking_budget: int | None = None) -> str:
     """The section a vision harness configuration's system text ends with: none for image ones.
-    For vdm with a reasoning budget it ends with VDM_BUDGET_TEXT, and with keep_tags then with
-    VDM_KEEP_TEXT (amp-split patches)."""
+    For vdm with a reasoning budget it ends with VDM_BUDGET_TEXT (amp-split patch)."""
     if vision == "image":
         return ""
     section = VISION_SECTIONS[vision]
     if vision == "vdm" and thinking_budget:
         section += VDM_BUDGET_TEXT.format(n=int(thinking_budget))
-    if vision == "vdm" and keep_tags:
-        section += VDM_KEEP_TEXT
     return section

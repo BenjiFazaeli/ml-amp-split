@@ -25,8 +25,17 @@ PNG_KEEP_BYTES = 64_000
 IMAGE_MAX_BYTES = 64 << 20
 MAX_SHOWN = 6
 PRELOADED = ("rh", "ep", "np", "Image", "show")
+# amp-split patch 0017 (--keep-tags): the kernel's keep_tags(kind, note) joins the preloaded names
+KEEP_TAGS_NAME = "keep_tags"
 PRELOADED_TEXT = {"rh": "rh (robolab_harness)", "ep": "ep (your connected episode)",
-                  "Image": "Image (PIL)", "show": "show(x, caption=None) to see an image"}
+                  "Image": "Image (PIL)", "show": "show(x, caption=None) to see an image",
+                  KEEP_TAGS_NAME: "keep_tags(kind, note) to keep one line past the removal of "
+                                  "your older reasoning"}
+
+
+def with_keep_tags(preloaded: tuple[str, ...]) -> tuple[str, ...]:
+    """preloaded plus keep_tags, once (amp-split patch 0017)."""
+    return preloaded if KEEP_TAGS_NAME in preloaded else (*preloaded, KEEP_TAGS_NAME)
 STRICT_PRELOADED_TEXT = {**PRELOADED_TEXT,
                          "show": "show(camera=<name>, caption=None) to have a camera described"}
 STRICT_PYTHON_TAIL = (", and a vision model's description of what changed whenever the robot "

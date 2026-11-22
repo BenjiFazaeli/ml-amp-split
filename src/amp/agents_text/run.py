@@ -47,7 +47,7 @@ from amp.agents.runtime import detect_runtime
 from amp.agents_text import surface
 from amp.agents_text.loop import Agent
 from amp.agents_text.surface import self_judged
-from amp.agents_text.tools import tools_for, tools_sha256
+from amp.agents_text.tools import tools_for, tools_sha256, with_keep_tags
 from amp.contracts import CONTRACT_VERSION
 from amp.contracts.eval import AGENT_CONFIG_FILE, EPISODE_FILE, AgentRunConfig
 from amp.contracts.model import (KEEP_TAGS_KEY, THINKING_BUDGET_KEY, TRIM_FLOOR_KEY,
@@ -148,13 +148,16 @@ def run(ep_dir: Path, *, tracer=None, registry=None, kernel_cls=None, episode_cl
     runtime = detect_runtime(environ)
     text = system_text(prof.prompt, registry.reference_text(spec))
     keep_tags = bool(prof.extra.get(KEEP_TAGS_KEY))        # amp-split patch: --keep-tags
+    preloaded = with_keep_tags(spec.preloaded) if keep_tags else spec.preloaded
+    if keep_tags:                                           # patch 0017: the keep_tags() block
+        text = surface.keep_tags_prompt(text)
     section = surface.vision_section(prof.prompt, prof.vision,
-                                     prof.extra.get(THINKING_BUDGET_KEY), keep_tags)
+                                     prof.extra.get(THINKING_BUDGET_KEY))
     if section:
         text = compose_system(text, section)
     judged_by_self = self_judged(prof.prompt)
     vdm_prof = vdm_profile(prof) if prof.vision != "image" else None
-    tools = tools_for(spec.preloaded, judged_by_self, vision=prof.vision)
+    tools = tools_for(preloaded, judged_by_self, vision=prof.vision)
     llm = build_llm(prof, runtime, environ=environ)
     vdm = build_llm(vdm_prof, runtime, environ=environ) if vdm_prof else None
     sdk_dir = install_sdk(spec, registry.sdk_source(spec), ep_dir)
@@ -190,7 +193,7 @@ def run(ep_dir: Path, *, tracer=None, registry=None, kernel_cls=None, episode_cl
              tools_sha256(tools)[:12], describe_llm(llm))
     client = (episode_client or EpisodeClient.from_file)(ep_dir / EPISODE_FILE)
     agent = Agent(ep_dir, llm=llm, kernel_factory=kernel_factory, episode=client,
-                  system_text=text, tracer=tracer, tools=tools, preloaded=spec.preloaded,
+                  system_text=text, tracer=tracer, tools=tools, preloaded=preloaded,
                   zero_shot=cfg.protocol.zero_shot, max_turns=prof.max_turns,
                   wall_s=prof.wall_s, max_cost_usd=prof.max_cost_usd, meta=meta,
                   judged_by_self=judged_by_self,

@@ -208,6 +208,16 @@ class Repl:
             img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
         return img
 
+    def keep_tags(self, kind, note):
+        """Keep one line past the removal of your older reasoning (amp-split patch 0017): prints
+        <keep kind="...">note</keep> into this call's result, which the harness keeps where the
+        reasoning was. kind: fact, fail, scene, plan or done."""
+        from amp.agents.context import keep_tag_line
+
+        line = keep_tag_line(kind, note)
+        print(line)
+        return line
+
     def show(self, x=None, caption=None, *, camera=None):
         """Save x (PIL image, HxW/HxWx3 array, figure or episode path) and attach it to the reply;
         camera=<name> instead names a camera whose frame the agent loop attaches itself."""
@@ -320,6 +330,7 @@ class Repl:
         bootstrap = init.get("bootstrap")
         self.ns.clear()
         self.ns.update({"__name__": "__main__", "__builtins__": builtins, "show": self.show,
+                        "keep_tags": self.keep_tags,        # amp-split patch 0017
                         "ep": None, "READY_TIMEOUT_S": ready_s, "EPISODE_FILE": episode_file})
         error = None
         try:
