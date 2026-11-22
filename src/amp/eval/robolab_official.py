@@ -554,7 +554,7 @@ class Launcher:
         out_dir.mkdir(parents=True, exist_ok=True)
         kw = {"task": unit.task, "num_runs": self.num_runs, "output_dir": str(out_dir),
               "server_url": slot.server_url, "driver_socket": str(driver.path)}
-        kw["gpu_index"] = slot.gpu_index
+        kw["gpu_index"] = kit_gpu_index(slot.gpu_uuid, slot.gpu_index)
         itype = driver.study.protocol.instruction_type
         if itype != "default":
             kw["instruction_type"] = itype
@@ -746,10 +746,16 @@ def make_profile(model: str, reasoning: str | None = None, prompt: str | None = 
     return built
 
 
-def make_backend(robolab_root: str, python: str):
-    from amp.robots.robolab.backend import RoboLabBackend
+def kit_gpu_index(gpu_uuid: str, gpu_index: int) -> int | None:
+    """The activeGpu a slot's Kit gets: none for a MIG slice, which Kit takes by its MIG- UUID in
+    CUDA_VISIBLE_DEVICES and whose index is not an nvidia-smi index (amp-split patch)."""
+    return None if gpu_uuid.startswith("MIG-") else gpu_index
 
-    return RoboLabBackend(robolab_root=robolab_root, python=python)
+
+def make_backend(robolab_root: str, python: str, render: dict | None = None):
+    from amp.robots.robolab.backend import RoboLabBackend, render_json
+
+    return RoboLabBackend(robolab_root=robolab_root, python=python, render=render_json(render))
 
 
 def robolab_paths(root: str | None = None, python: str | None = None, environ=None
@@ -788,6 +794,10 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--gpus", default="auto", help="auto (every NVIDIA GPU that is not busy), or GPU indices or UUIDs")
     ap.add_argument("--slots-per-gpu", default="auto",
                     help="auto (one Kit per GPU) or 1-2 Kits per GPU, each running its own task")
+    ap.add_argument("--robolab-render", nargs="+", default=[], metavar="FIELD=VALUE",
+                    help="Isaac Lab RenderCfg fields set on every task's env config before it is "
+                         "built, e.g. dlss_mode=2 (DLSS Quality, for Isaac Sim 6); values are "
+                         "JSON, else true/false/none, else strings (amp-split patch)")
     ap.add_argument("--output", required=True, type=Path, help="the run folder; reuse to resume")
     ap.add_argument("--job-id", default=None, help="default: the --output folder's name")
     ap.add_argument("--sandbox", default="auto", choices=("auto", "bwrap"))
@@ -938,7 +948,14 @@ def main(argv: list[str] | None = None) -> int:
         study = build_study(a, tasks, est)
     except (KeyError, ValueError) as e:
         ap.error(str(e))
-    backend = make_backend(a.robolab_root, a.robolab_python)
+    from amp.robots.robolab.backend import parse_render
+    try:
+        render = parse_render(a.robolab_render)
+    except ValueError as e:
+        ap.error(str(e))
+    backend = make_backend(a.robolab_root, a.robolab_python, render)
+    if render:
+        log(f"RoboLab render settings: {render}")
     log(f"{len(study.arms)} harness configurations x {len(tasks)} tasks x {a.num_runs} runs on "
         f"{len(chosen)} GPUs x {per_gpu} slots: {', '.join(g.describe() for g in chosen)}")
     launcher = Launcher(study=study, backend=backend, tasks=tasks, num_runs=a.num_runs,

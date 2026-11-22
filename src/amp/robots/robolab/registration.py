@@ -32,9 +32,10 @@ def register_amp_envs(task_dirs=None, task=None) -> None:
         EgocentricMirroredCameraCfg,
         OverShoulderLeftCameraCfg,
         OverShoulderRightCameraCfg,
-        with_depth,
     )
     from robolab.variations.lighting import SphereLightCfg
+
+    from amp.robots.robolab.depth import robolab_with_depth as with_depth  # amp-split patch
 
     cameras = [with_depth(OverShoulderLeftCameraCfg), with_depth(OverShoulderRightCameraCfg),
                WristCameraCfg]

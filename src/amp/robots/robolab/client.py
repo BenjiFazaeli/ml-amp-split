@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -107,8 +108,36 @@ class ClientConfig:
         return cls(**data)
 
 
+def instruction_text(instruction: Any) -> str:
+    """The task's instruction as the coder reads it (amp-split patch). RoboLab v0.3.3 hands the
+    client its instruction fields as a mapping ({"default": "..."}), v0.3.1 a string: a mapping
+    gives its primary field, as RoboLab's primary_instruction picks it ("default", else the first)."""
+    if isinstance(instruction, str):
+        return instruction
+    if isinstance(instruction, Mapping):
+        keys = list(instruction.keys())
+        if not keys:
+            return ""
+        value = instruction["default" if "default" in keys else keys[0]]
+        return value if isinstance(value, str) else ""
+    return ""
+
+
+def quat_wxyz(quat: np.ndarray) -> np.ndarray:
+    """A sensor quaternion read from Isaac Lab, as (w, x, y, z): Isaac Lab 3 stores (x, y, z, w)
+    (RoboLab v0.3.3's isaaclab_compat tells which); RoboLab v0.3.1 has no such module and Isaac
+    Lab 2 is already WXYZ (amp-split patch)."""
+    try:
+        from robolab.core.utils.isaaclab_compat import ISAACLAB_USES_XYZW
+    except Exception:  # noqa: BLE001
+        return quat
+    return quat[..., [3, 0, 1, 2]] if ISAACLAB_USES_XYZW else quat
+
+
 def to_numpy(value: Any, env_id: int | None = None) -> np.ndarray:
     """A torch tensor or array-like as numpy, optionally selecting one env's row first."""
+    if not hasattr(value, "detach") and hasattr(value, "torch"):
+        value = value.torch          # Isaac Lab 3's ProxyArray (amp-split patch)
     if env_id is not None:
         value = value[env_id]
     if hasattr(value, "detach"):
@@ -171,7 +200,7 @@ class LiveRoboLab:
         """The resolved instruction of the env being run (create_env resolves the wording)."""
         env = self.env()
         value = getattr(getattr(env, "cfg", None), "instruction", None)
-        return value if isinstance(value, str) else ""
+        return instruction_text(value)
 
     def camera_cfgs(self, camera_set: str) -> tuple[dict, str]:
         """({link name: cfg}, source): RoboLab's cfg classes when importable, else the mounts."""
@@ -294,11 +323,12 @@ class LinkPolicy:
         if env is None:
             return
         self._fixed_checked = True
+        self._log_render_settings()
         for name, model in self._fixed_models.items():
             try:
                 data = env.scene.sensors[self.camera_keys[name]].data
                 pos = to_numpy(data.pos_w, env_id) - to_numpy(env.scene.env_origins, env_id)
-                T_live = make_pose(pos, to_numpy(data.quat_w_ros, env_id))
+                T_live = make_pose(pos, quat_wxyz(to_numpy(data.quat_w_ros, env_id)))
                 T_cfg = model.T_world_cam
                 d_mm = 1000.0 * float(np.linalg.norm(T_live[:3, 3] - T_cfg[:3, 3]))
                 cos = (np.trace(T_live[:3, :3].T @ T_cfg[:3, :3]) - 1.0) / 2.0
@@ -307,6 +337,18 @@ class LinkPolicy:
                          f"differ by {d_mm:.1f} mm, {d_deg:.2f} deg")
             except Exception as exc:  # noqa: BLE001
                 self.log(f"{name} camera check skipped ({type(exc).__name__}: {exc})")
+
+    def _log_render_settings(self) -> None:
+        """The render settings Kit is running with, once (amp-split patch): whether
+        --robolab-render took effect."""
+        try:
+            import carb
+
+            settings = carb.settings.get_settings()
+            keys = ("/rtx/rendermode", "/rtx/post/dlss/execMode", "/rtx/post/aa/op")
+            self.log("render settings: " + ", ".join(f"{k} {settings.get(k)!r}" for k in keys))
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"render settings not read ({type(exc).__name__}: {exc})")
 
     def _extract_observation(self, raw_obs: Any, *, env_id: int = 0) -> dict:
         images = raw_obs["image_obs"]
@@ -337,7 +379,8 @@ class LinkPolicy:
             "ee_quat": to_numpy(proprio["ee_quat"], env_id).astype(np.float64).reshape(-1),
         }
 
-    def _pack_request(self, extracted_obs: dict, instruction: str) -> Any:
+    def _pack_request(self, extracted_obs: dict, instruction: Any) -> Any:
+        instruction = instruction_text(instruction)
         control_dt, max_steps = self._control_dt(), self._max_steps()
         task = self.robolab.task_name()
         if self._begin_pending:

@@ -26,6 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="The client's settings, a ClientConfig as JSON.")
     parser.add_argument("--amp-driver", "--amp_driver", required=True,
                         help="Unix socket of the slot's episode driver.")
+    parser.add_argument("--amp-render", "--amp_render", default="",
+                        help="RenderCfg fields for every env config, as a JSON object "
+                             "(amp-split patch: amp eval robolab --robolab-render).")
     return parser
 
 
@@ -88,6 +91,14 @@ def _evaluate(args, config, run_evaluation, lock) -> None:
 
     robolab.constants.ENABLE_SUBTASK_PROGRESS_CHECKING = args.enable_subtask
     register_amp_envs(task_dirs=args.task_dirs, task=args.task)
+    if args.amp_render:
+        import json
+
+        from amp.robots.robolab.render import apply_render
+
+        render = json.loads(args.amp_render)
+        patched = apply_render(render)
+        _log(f"render settings {render} on {len(patched)} env config(s)")
 
     output_dir = os.path.join(robolab.constants.PACKAGE_DIR, "output", args.output_folder_name)
     names = get_envs(task=args.task) if args.task else get_envs()

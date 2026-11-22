@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import json
+import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from amp.contracts.eval import INSTRUCTION_TYPES
 from amp.contracts.robot import EpisodeRef
@@ -19,6 +22,29 @@ from amp.robots.robolab.records import ingest_results, result_artifacts
 RUN_MODULE = "amp.robots.robolab.run"
 KIT_ARGS = "--/renderer/multiGpu/enabled=false"
 ACTIVE_GPU_ARG = "--/renderer/activeGpu"
+RENDER_FIELD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+RENDER_WORDS = {"true": True, "false": False, "none": None, "null": None}
+
+
+def parse_render(items: Iterable[str]) -> dict[str, Any]:
+    """--robolab-render FIELD=VALUE items as {field: value} (amp-split patch): each value as JSON,
+    else true/false/none in any case, else the string. ValueError names a bad item."""
+    out: dict[str, Any] = {}
+    for item in items:
+        name, sep, text = item.partition("=")
+        if not sep or not RENDER_FIELD.fullmatch(name):
+            raise ValueError(f"--robolab-render expects FIELD=VALUE, got {item!r}")
+        try:
+            value = json.loads(text)
+        except ValueError:
+            value = RENDER_WORDS.get(text.lower(), text)
+        out[name] = value
+    return out
+
+
+def render_json(render: Mapping[str, Any] | None) -> str:
+    """The settings as run.py's --amp-render takes them; "" for none."""
+    return json.dumps(dict(render), sort_keys=True) if render else ""
 
 
 @dataclass(frozen=True)
@@ -29,6 +55,8 @@ class RoboLabBackend:
     python: str
     policy_label: str = "amp"
     depth_stride: int = 4
+    # RenderCfg fields for every env config, as JSON ("" for none; amp-split patch)
+    render: str = ""
     name: str = field(default="robolab", init=False)
 
     def client_config(self) -> ClientConfig:
@@ -62,6 +90,8 @@ class RoboLabBackend:
                 "--amp-driver", str(driver_socket)]
         if instruction_type != "default":
             cmd += ["--instruction-type", instruction_type]
+        if self.render:
+            cmd += ["--amp-render", self.render]
         return cmd
 
     def env(self, *, gpu_uuid: str, base: Mapping[str, str]) -> dict[str, str]:

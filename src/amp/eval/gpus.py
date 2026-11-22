@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,14 @@ MAX_SLOTS = 2
 SMALL_WARNING = ("warning: GPU {index} {name} has {gib:.1f} GiB of VRAM; a Kit used about 9 GB in "
                  "validation and may not fit; pass --gpus to leave it out")
 QUERY = ("--query-gpu=index,uuid,name,memory.total,memory.used", "--format=csv,noheader,nounits")
+# MIG slices (amp-split patch): --query-gpu lists only the parent GPUs, with the whole card's
+# memory, so slices come from `nvidia-smi -L`, e.g.
+#   GPU 0: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-2f75...)
+#     MIG 2g.48gb     Device  0: (UUID: MIG-49a9...)
+LIST = ("-L",)
+GPU_LINE = re.compile(r"^GPU\s+(\d+):\s*(.*?)\s*\(UUID:\s*(GPU-[^)\s]+)\)")
+MIG_LINE = re.compile(r"^\s+MIG\s+(\S+)\s+Device\s+(\d+):\s*\(UUID:\s*(MIG-[^)\s]+)\)")
+MIG_PROFILE_GB = re.compile(r"\.(\d+)gb\b")
 
 
 class GpuError(RuntimeError):
@@ -40,6 +49,10 @@ class Gpu:
     name: str
     total_mib: int
     used_mib: int
+    # A MIG slice (amp-split patch): uuid is its MIG- UUID, index its position among the slices,
+    # total_mib the profile's memory, used_mib 0 (a slice is the job's own; nvidia-smi does not
+    # report its use). Kit takes the slice by CUDA_VISIBLE_DEVICES alone, with no activeGpu.
+    mig: bool = False
 
     @property
     def total_gib(self) -> float:
@@ -67,6 +80,8 @@ class Gpu:
         return None
 
     def describe(self) -> str:
+        if self.mig:
+            return f"MIG slice {self.index} {self.name} {self.uuid}: {self.total_gib:.1f} GiB"
         return (f"GPU {self.index} {self.name} {self.uuid}: {self.total_gib:.1f} GiB, "
                 f"{self.used_gib:.1f} GiB used")
 
@@ -86,19 +101,60 @@ def parse_smi(text: str) -> list[Gpu]:
     return sorted(out, key=lambda g: g.index)
 
 
+def parse_mig(text: str) -> list[Gpu]:
+    """The MIG slices in `nvidia-smi -L` output, in listed order (amp-split patch); [] for none."""
+    out: list[Gpu] = []
+    parent = ""
+    for line in text.splitlines():
+        if m := GPU_LINE.match(line):
+            parent = m.group(2)
+            continue
+        if not (m := MIG_LINE.match(line)):
+            continue
+        profile, uuid = m.group(1), m.group(3)
+        gb = MIG_PROFILE_GB.search(profile)
+        total_mib = int(int(gb.group(1)) * 1e9 / MIB) if gb else 0
+        out.append(Gpu(len(out), uuid, f"{parent} MIG {profile}".strip(), total_mib, 0, mig=True))
+    return out
+
+
+def choose_devices(gpus: Sequence[Gpu], slices: Sequence[Gpu],
+                   visible: str | None = None) -> list[Gpu]:
+    """The devices a Kit may use: the MIG slices when there are any (their parents cannot host
+    a Kit, and report other jobs' use), restricted to CUDA_VISIBLE_DEVICES' MIG UUIDs when it
+    names some; else the GPUs, as before (amp-split patch)."""
+    if not slices:
+        return list(gpus)
+    named = {v.strip() for v in (visible or "").split(",") if v.strip().startswith("MIG-")}
+    chosen = [s for s in slices if not named or s.uuid in named]
+    return [Gpu(i, s.uuid, s.name, s.total_mib, s.used_mib, mig=True)
+            for i, s in enumerate(chosen)]
+
+
+def _smi(exe: str, args: Sequence[str], timeout_s: float) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run([exe, *args], capture_output=True, text=True, timeout=timeout_s,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                              check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise GpuError(f"nvidia-smi: {type(e).__name__}: {e}") from e
+
+
 def query(smi: str | None = None, *, timeout_s: float = 30.0) -> list[Gpu]:
-    """Every GPU nvidia-smi reports; GpuError when nvidia-smi is missing or fails."""
+    """Every GPU nvidia-smi reports, or this job's MIG slices on a MIG node; GpuError when
+    nvidia-smi is missing or fails."""
     exe = smi or os.environ.get("AMP_NVIDIA_SMI") or shutil.which("nvidia-smi")
     if not exe:
         raise GpuError("nvidia-smi not found")
-    try:
-        p = subprocess.run([exe, *QUERY], capture_output=True, text=True, timeout=timeout_s,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                           check=False)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        raise GpuError(f"nvidia-smi: {type(e).__name__}: {e}") from e
+    p = _smi(exe, QUERY, timeout_s)
     if p.returncode != 0:
         raise GpuError(f"nvidia-smi exited {p.returncode}: {p.stderr.strip()[:300]}")
-    return parse_smi(p.stdout)
+    gpus = parse_smi(p.stdout)
+    try:
+        listed = _smi(exe, LIST, timeout_s)
+    except GpuError:
+        return gpus
+    slices = parse_mig(listed.stdout) if listed.returncode == 0 else []
+    return choose_devices(gpus, slices, os.environ.get("CUDA_VISIBLE_DEVICES"))
 
 
 def select(spec: str, gpus: Sequence[Gpu], *,
