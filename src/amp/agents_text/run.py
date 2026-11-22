@@ -50,8 +50,8 @@ from amp.agents_text.surface import self_judged
 from amp.agents_text.tools import tools_for, tools_sha256, with_keep_tags
 from amp.contracts import CONTRACT_VERSION
 from amp.contracts.eval import AGENT_CONFIG_FILE, EPISODE_FILE, AgentRunConfig
-from amp.contracts.model import (KEEP_TAGS_KEY, THINKING_BUDGET_KEY, TRIM_FLOOR_KEY,
-                                 TRIM_SELECT_KEY)
+from amp.contracts.model import (CUT_NOTE_KEY, KEEP_TAGS_KEY, THINKING_BUDGET_KEY,
+                                 TRIM_FLOOR_KEY, TRIM_SELECT_KEY)
 from amp.trace import from_env
 from amp.trace.redact import DEFAULT
 
@@ -199,7 +199,8 @@ def run(ep_dir: Path, *, tracer=None, registry=None, kernel_cls=None, episode_cl
                   judged_by_self=judged_by_self,
                   official=Official(client, key) if key else None, vdm_llm=vdm,
                   vision=prof.vision, trim_floor=prof.extra.get(TRIM_FLOOR_KEY),
-                  trim_select=prof.extra.get(TRIM_SELECT_KEY), keep_tags=keep_tags)
+                  trim_select=prof.extra.get(TRIM_SELECT_KEY), keep_tags=keep_tags,
+                  cut_note=bool(prof.extra.get(CUT_NOTE_KEY)))    # patch 0018: --cut-note
     try:
         agent.run()
     finally:

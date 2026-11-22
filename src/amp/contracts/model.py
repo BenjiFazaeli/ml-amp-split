@@ -25,6 +25,9 @@ TRIM_SELECT_KEY = "trim_select"
 # amp-split patch: the AgentProfile.extra key of kept notes (amp eval robolab --keep-tags): the vdm
 # prompt asks for <keep> lines and the text loop's ContextWindow keeps them at the cut.
 KEEP_TAGS_KEY = "keep_tags"
+# amp-split patch 0018: the AgentProfile.extra key of the harness's cut note (amp eval robolab
+# --cut-note): the text loop's ContextWindow appends a note on what each cut removed.
+CUT_NOTE_KEY = "cut_note"
 
 CONTEXT_WINDOWS: dict[str, int] = {
     "claude-opus-5-5": 1_000_000,

@@ -45,7 +45,7 @@ from amp.contracts.eval import (
     unit_name,
 )
 from amp.agents.context import PROMPT_BUDGET_FRACTION, SELECTS
-from amp.contracts.model import (KEEP_TAGS_KEY, THINKING_BUDGET_KEY, TRIM_FLOOR_KEY,
+from amp.contracts.model import (CUT_NOTE_KEY, KEEP_TAGS_KEY, THINKING_BUDGET_KEY, TRIM_FLOOR_KEY,
                                  TRIM_SELECT_KEY)
 from amp.contracts.trace import NullTracer
 
@@ -846,6 +846,12 @@ def parser() -> argparse.ArgumentParser:
                          "elides reasoning. Needs --trim-floor and --vision vdm; changes the "
                          "prompt of every episode. Recorded in the profile's extra, so such a "
                          "run needs its own --output (amp-split patch)")
+    ap.add_argument("--cut-note", action="store_true",
+                    help="each --trim-floor cut ends with the harness's note to the coder on "
+                         "what it removed and what still stands, appended to the newest tool "
+                         "result; the prompt is unchanged. Needs --trim-floor. Recorded in the "
+                         "profile's extra, so such a run needs its own --output (amp-split "
+                         "patch 0018)")
     return ap
 
 
@@ -900,13 +906,23 @@ def keep_extra(keep: bool, floor: float | None, vision_mode: str | None) -> dict
     return {KEEP_TAGS_KEY: True}
 
 
+def cut_note_extra(note: bool, floor: float | None) -> dict:
+    """The profile extra for --cut-note (amp-split patch 0018); ValueError without --trim-floor."""
+    if not note:
+        return {}
+    if floor is None:
+        raise ValueError("--cut-note needs --trim-floor: the note describes that cut")
+    return {CUT_NOTE_KEY: True}
+
+
 def profile_extra(a: argparse.Namespace) -> dict | None:
-    """--thinking-budget, --trim-floor, --trim-select and --keep-tags as one profile extra; None
-    when none is set."""
+    """--thinking-budget, --trim-floor, --trim-select, --keep-tags and --cut-note as one profile
+    extra; None when none is set."""
     floor = getattr(a, "trim_floor", None)
     extra = {**(thinking_extra(getattr(a, "thinking_budget", None)) or {}),
              **trim_extra(floor), **select_extra(getattr(a, "trim_select", None), floor),
-             **keep_extra(getattr(a, "keep_tags", False), floor, getattr(a, "vision", None))}
+             **keep_extra(getattr(a, "keep_tags", False), floor, getattr(a, "vision", None)),
+             **cut_note_extra(getattr(a, "cut_note", False), floor)}
     return extra or None
 
 

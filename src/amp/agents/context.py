@@ -74,6 +74,68 @@ KEEP_CAP = 8000             # tokens of kept reasoning notes in the whole histor
 KEEP_DROP = (("plan", "scene"), ("done",), ("fact",))   # over the cap, oldest first; never fail
 KEPT_HEAD = "[earlier reasoning elided; kept notes:]"
 KEPT_TEXT_HEAD = "[kept notes from the elided part:]"
+# amp-split patch 0018: --cut-note. At a cut the harness itself tells the coder what the cut
+# removed and what still stands, in a text block appended to the newest user message (the result
+# it is about to read), so the cut is explicit and the coder re-derives rather than recalls. No
+# model call; nothing asked of the coder (0015's inline tags and 0017's keep_tags() were never
+# used: 468 replies, zero notes).
+CUT_NOTE_TEXT = ("[context note from the harness: this conversation was just cut to fit the "
+                 "model's context window. Removed: {removed}. Still here: every python call's "
+                 "code, your text replies, and every tool result not listed above; the kernel's "
+                 "state (your variables and functions) is untouched by the cut. Whatever you "
+                 "worked out in the removed reasoning and did not print or state, re-derive it "
+                 "from the code and results above, or by running the code again, rather than "
+                 "from memory.]")
+
+
+def _n(n: int, word: str, plural: str | None = None) -> str:
+    return f"{n} {word if n == 1 else (plural or word + 's')}"
+
+
+def cut_note(counts: dict, steps: tuple[int | None, int | None] = (None, None)) -> str | None:
+    """The harness's note for one cut (amp-split patch 0018): what fit's stages removed, from its
+    counts, with the step range of the newly elided reasoning when known; None when the counts
+    name nothing (nothing left to elide: no note)."""
+    parts = []
+    k = counts.get("thinking", 0)
+    if k:
+        a, b = steps
+        span = "" if a is None or b is None else \
+            (f" (at step {a})" if a == b else f" (from step {a} to step {b})")
+        parts.append(f"your reasoning on {_n(k, 'earlier turn')}{span}")
+    f = counts.get("resolved_errors", 0)
+    if f:
+        parts.append(f"the code and reasoning of {_n(f, 'failed python call')}, each collapsed "
+                     f"to its error line (every one of them was fixed within {RESOLVE_TURNS} "
+                     "turns)")
+    q = counts.get("superseded", 0)
+    if q:
+        parts.append(f"{_n(q, 'older state printout')} that a later call printed again")
+    t = counts.get("tool_text", 0) + counts.get("tool_input", 0) + counts.get("assistant_text", 0)
+    if t:
+        parts.append(f"the middle of {_n(t, 'long text')}")
+    i = counts.get("images", 0)
+    if i:
+        parts.append(_n(i, "image"))
+    w = counts.get("tool_results", 0)
+    if w:
+        parts.append(_n(w, "whole tool result"))
+    if not parts:
+        return None
+    return CUT_NOTE_TEXT.format(removed="; ".join(parts))
+
+
+def step_after(messages: list[dict], j: int) -> int | None:
+    """The step the tool result answering assistant message j reports in its footer, or None."""
+    nxt = messages[j + 1] if j + 1 < len(messages) else {}
+    if nxt.get("role") != "user" or not isinstance(nxt.get("content"), list):
+        return None
+    steps = []
+    for r in nxt["content"]:
+        if r.get("type") == "tool_result" and isinstance(r.get("content"), list):
+            texts = [b.get("text") or "" for b in r["content"] if b.get("type") == "text"]
+            steps += STEP_RE.findall(texts[-1]) if texts else []
+    return int(steps[-1]) if steps else None
 
 
 def keep_notes(text: str) -> list[tuple[str, str]]:
@@ -278,7 +340,8 @@ class ContextWindow:
     def __init__(self, context_tokens: int | None = None, image_cost=None,
                  max_images: int = MAX_IMAGES, max_image_b64: int = MAX_IMAGE_B64,
                  trim_floor: float | None = None, select: str | None = None,
-                 vision: str | None = None, keep_tags: bool = False):
+                 vision: str | None = None, keep_tags: bool = False,
+                 cut_note: bool = False):
         self.context_tokens = context_tokens
         # amp-split patch: once fit has to elide, it cuts to trim_floor x the window instead of
         # to the budget, so the history is append-only again for many turns (vLLM's prefix cache
@@ -299,6 +362,10 @@ class ContextWindow:
             raise ValueError("keep_tags needs trim_floor: the notes are kept at a cut to the floor")
         self.keep_tags = bool(keep_tags)
         self.keep_cap = KEEP_CAP
+        # amp-split patch 0018: cut_note appends the harness's note on each cut to the floor
+        if cut_note and self.trim_floor is None:
+            raise ValueError("cut_note needs trim_floor: the note describes a cut to the floor")
+        self.cut_note = bool(cut_note)
         self.result_elided = RESULT_ELIDED_BY_VISION.get(vision or "image", RESULT_ELIDED) \
             if select else RESULT_ELIDED
         self.image_cost = image_cost
@@ -409,7 +476,9 @@ class ContextWindow:
         further stage once the request fits the budget. With select "outcome" (amp-split patch)
         that cut first collapses fixed errors and superseded state printouts, then reasoning,
         and never touches the newest clock and object printouts (pins). With keep_tags
-        (amp-split patch) elided reasoning keeps the coder's <keep> lines, within keep_cap."""
+        (amp-split patch) elided reasoning keeps the coder's <keep> lines, within keep_cap. With
+        cut_note (amp-split patch 0018) a cut ends with the harness's note on what it removed,
+        appended to the newest user message."""
         if not self.context_tokens:
             return None
         budget = self.budget_fraction * self.context_tokens
@@ -544,6 +613,7 @@ class ContextWindow:
         counts = dict.fromkeys(names, 0)
         freed = dict.fromkeys(names, 0.0)
         dropped: set[int] = set()
+        elided_at: list[int] = []        # patch 0018: indexes of the messages whose reasoning went
         for name in names:
             # amp-split patch: the floor deepens a stage, never adds one; with a selection its
             # first three stages (DEEPEN) go on to the floor together
@@ -558,12 +628,25 @@ class ContextWindow:
                 for cont, i, repl in edits:
                     dropped |= image_ids(cont[i]) - image_ids(repl)
                     cont[i] = repl
+                    if name == "thinking" and self.cut_note:
+                        elided_at.append(next(j for j, m in enumerate(messages)
+                                              if m.get("content") is cont))
                 total -= gain
                 counts[name] += 1
                 freed[name] += gain
                 if total <= target:
                     break
         capped = self.cap_notes(old) if self.keep_tags else 0
+        note = None
+        if self.cut_note:
+            steps = (step_after(messages, min(elided_at)), step_after(messages, max(elided_at))) \
+                if elided_at else (None, None)
+            note = cut_note(counts, steps)
+            last = messages[-1] if messages else {}
+            if note and last.get("role") == "user" and isinstance(last.get("content"), list):
+                last["content"].append(_text(note))
+            else:
+                note = None
         if dropped:
             self.images = [x for x in self.images if id(x[1]) not in dropped]
             for k in dropped:
@@ -581,6 +664,8 @@ class ContextWindow:
             kept = [k for _, _, notes in self.kept(old) for k, _ in notes]
             out.update(keep_tags=True, notes_dropped=capped,
                        kept_notes={k: kept.count(k) for k in KEEP_KINDS if k in kept})
+        if self.cut_note:
+            out.update(cut_note=note)
         return out
 
     def elided(self, reasoning: str) -> str:

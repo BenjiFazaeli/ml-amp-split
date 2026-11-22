@@ -118,7 +118,7 @@ class Agent:
                  cameras: tuple[str, ...] = CAMERAS, judged_by_self: bool = False,
                  official=None, vdm_llm=None, vision: str | None = None,
                  trim_floor: float | None = None, trim_select: str | None = None,
-                 keep_tags: bool = False):
+                 keep_tags: bool = False, cut_note: bool = False):
         self.dir = Path(episode_dir).resolve()
         self.info = json.loads((self.dir / "episode.json").read_text())
         self.llm, self.kernel_factory, self.ep = llm, kernel_factory, episode
@@ -139,7 +139,8 @@ class Agent:
                                  getattr(llm, "estimate_image_tokens", None),
                                  trim_floor=trim_floor,     # amp-split patch: --trim-floor
                                  select=trim_select, vision=self.vision,   # --trim-select
-                                 keep_tags=keep_tags)                       # and --keep-tags
+                                 keep_tags=keep_tags,                       # --keep-tags
+                                 cut_note=cut_note)                         # and --cut-note
         self.context_window: int | None = getattr(llm, "context_window", None)
         self.limits = {"max_turns": max_turns, "wall_s": wall_s, "max_cost_usd": max_cost_usd}
         self.kernel = None
